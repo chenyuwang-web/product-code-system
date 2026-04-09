@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>產品編碼系統</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: "Microsoft JhengHei", sans-serif; background: #f0f2f5; min-height: 100vh; }
+
+        .header {
+            background: linear-gradient(135deg, #1a73e8, #0d47a1);
+            color: #fff; padding: 20px 30px; text-align: center;
+        }
+        .header h1 { font-size: 1.6rem; }
+        .header p { font-size: 0.9rem; opacity: 0.85; margin-top: 4px; }
+
+        .container { max-width: 900px; margin: 30px auto; padding: 0 20px; }
+
+        .card {
+            background: #fff; border-radius: 12px; padding: 28px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.08); margin-bottom: 24px;
+        }
+        .card h2 { font-size: 1.2rem; color: #333; margin-bottom: 20px; border-left: 4px solid #1a73e8; padding-left: 12px; }
+
+        .form-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 18px;
+        }
+        @media (max-width: 600px) { .form-grid { grid-template-columns: 1fr; } }
+
+        .form-group { display: flex; flex-direction: column; }
+        .form-group label { font-size: 0.85rem; color: #555; margin-bottom: 6px; font-weight: 600; }
+        .form-group select, .form-group input {
+            padding: 10px 14px; border: 1.5px solid #ddd; border-radius: 8px;
+            font-size: 1rem; background: #fafafa; transition: border-color 0.2s;
+        }
+        .form-group select:focus, .form-group input:focus { border-color: #1a73e8; outline: none; background: #fff; }
+
+        .preview-box {
+            background: #e8f0fe; border-radius: 10px; padding: 20px;
+            text-align: center; margin-top: 20px;
+        }
+        .preview-box .label { font-size: 0.85rem; color: #555; }
+        .preview-box .code {
+            font-size: 2rem; font-weight: 700; color: #1a73e8;
+            letter-spacing: 3px; margin-top: 6px; font-family: "Consolas", monospace;
+        }
+
+        .btn-row { display: flex; gap: 12px; margin-top: 20px; justify-content: center; flex-wrap: wrap; }
+        .btn {
+            padding: 12px 32px; border: none; border-radius: 8px; font-size: 1rem;
+            cursor: pointer; font-weight: 600; transition: all 0.2s;
+        }
+        .btn-primary { background: #1a73e8; color: #fff; }
+        .btn-primary:hover { background: #1558b0; }
+        .btn-primary:disabled { background: #aaa; cursor: not-allowed; }
+        .btn-secondary { background: #e0e0e0; color: #333; }
+        .btn-secondary:hover { background: #d0d0d0; }
+        .btn-danger { background: #d32f2f; color: #fff; }
+        .btn-danger:hover { background: #b71c1c; }
+
+        .msg { padding: 12px 16px; border-radius: 8px; margin-top: 14px; font-size: 0.9rem; display: none; }
+        .msg-success { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
+        .msg-error { background: #ffebee; color: #c62828; border: 1px solid #ef9a9a; }
+
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th { background: #f5f5f5; padding: 10px 14px; text-align: left; font-size: 0.85rem; color: #555; border-bottom: 2px solid #ddd; }
+        td { padding: 10px 14px; border-bottom: 1px solid #eee; font-size: 0.9rem; }
+        tr:hover td { background: #f9f9f9; }
+        .code-cell { font-family: "Consolas", monospace; font-weight: 600; color: #1a73e8; letter-spacing: 1px; }
+        .delete-btn { color: #d32f2f; cursor: pointer; border: none; background: none; font-size: 0.85rem; }
+        .delete-btn:hover { text-decoration: underline; }
+        .empty-state { text-align: center; color: #999; padding: 30px; }
+
+        .search-bar { display: flex; gap: 10px; margin-bottom: 16px; }
+        .search-bar input { flex: 1; padding: 10px 14px; border: 1.5px solid #ddd; border-radius: 8px; font-size: 0.95rem; }
+        .search-bar input:focus { border-color: #1a73e8; outline: none; }
+
+        .stats { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+        .stat-item { background: #f5f5f5; padding: 10px 18px; border-radius: 8px; font-size: 0.85rem; color: #555; }
+        .stat-item strong { color: #1a73e8; font-size: 1.1rem; }
+
+        .export-row { display: flex; gap: 10px; justify-content: flex-end; margin-bottom: 12px; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h1>產品編碼系統</h1>
+    <p>編碼格式：屬性(1) + 產品來源(1) + 物料類型(3) + 品別(1) + 流水號(4)</p>
+</div>
+
+<div class="container">
+    <!-- 編碼產生器 -->
+    <div class="card">
+        <h2>產生新編碼</h2>
+        <div class="form-grid">
+            <div class="form-group">
+                <label>屬性</label>
+                <select id="attr">
+                    <option value="">-- 請選擇 --</option>
+                    <option value="A">A - 成品</option>
+                    <option value="B">B - 半成品</option>
+                    <option value="C">C - 物料</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>產品來源</label>
+                <select id="source">
+                    <option value="">-- 請選擇 --</option>
+                    <option value="1">1 - 自製產品</option>
+                    <option value="2">2 - 客供產品</option>
+                    <option value="3">3 - 外購</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>物料類型</label>
+                <select id="material">
+                    <option value="">-- 請選擇 --</option>
+                    <option value="ELE">ELE - 電子電控類</option>
+                    <option value="PNE">PNE - 氣動氣路類</option>
+                    <option value="MEC">MEC - 金屬材料/加工件類</option>
+                    <option value="PAC">PAC - 包裝/紙材類</option>
+                    <option value="PLA">PLA - 塑膠原料類</option>
+                    <option value="CHE">CHE - 化學耗材類</option>
+                    <option value="FAS">FAS - 標準鎖附五金類</option>
+                    <option value="TRA">TRA - 傳動元件類</option>
+                    <option value="RUB">RUB - 橡膠/矽膠類</option>
+                    <option value="CAB">CAB - 線材/線纜類</option>
+                    <option value="OPT">OPT - 光學元件類</option>
+                    <option value="CON">CON - 一般耗材類</option>
+                    <option value="RSP">RSP - Reticle SMIF Pod</option>
+                    <option value="FOS">FOS - Front Opening Shipping Box</option>
+                    <option value="LMB">LMB - Large Mask Box</option>
+                    <option value="FOU">FOU - Front Opening Unified Pod</option>
+                    <option value="OVT">OVT - Oval Tube</option>
+                    <option value="ARS">ARS - Automatic RSP Assembly Machine</option>
+                    <option value="ANJ">ANJ - Automatic Night Jar Measurement System</option>
+                    <option value="OHB">OHB - Overhead Hoist Buffer</option>
+                    <option value="AOI">AOI - Automated Optical Inspection</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>品別</label>
+                <select id="grade">
+                    <option value="">-- 請選擇 --</option>
+                    <option value="N">N - 新品</option>
+                    <option value="R">R - 維修品</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>產品描述（選填）</label>
+                <input type="text" id="desc" placeholder="例如：主控制板 V2">
+            </div>
+            <div class="form-group">
+                <label>流水號（自動產生，或手動輸入）</label>
+                <input type="text" id="serial" placeholder="自動帶入下一個可用號碼" maxlength="4">
+            </div>
+        </div>
+
+        <div class="preview-box">
+            <div class="label">編碼預覽</div>
+            <div class="code" id="preview">------</div>
+        </div>
+
+        <div id="msg" class="msg"></div>
+
+        <div class="btn-row">
+            <button class="btn btn-primary" id="addBtn" onclick="addCode()" disabled>確認新增</button>
+            <button class="btn btn-secondary" onclick="resetForm()">清除重填</button>
+        </div>
+    </div>
+
+    <!-- 已使用編碼清單 -->
+    <div class="card">
+        <h2>已使用編碼清單</h2>
+
+        <div class="stats" id="stats"></div>
+
+        <div class="search-bar">
+            <input type="text" id="searchInput" placeholder="搜尋編碼或描述..." oninput="renderTable()">
+        </div>
+
+        <div class="export-row">
+            <button class="btn btn-secondary" onclick="exportCSV()">匯出 CSV</button>
+            <button class="btn btn-secondary" onclick="importCSV()">匯入 CSV</button>
+            <input type="file" id="csvFile" accept=".csv" style="display:none" onchange="handleImport(event)">
+        </div>
+
+        <div id="tableWrap"></div>
+    </div>
+</div>
+
+<script>
+const STORAGE_KEY = 'product_codes';
+const selectors = ['attr', 'source', 'material', 'grade'];
+
+function loadCodes() {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+}
+function saveCodes(codes) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(codes));
+}
+
+// 自動計算下一個流水號
+function getNextSerial(attr, source, material, grade) {
+    const codes = loadCodes();
+    const prefix = attr + source + material + grade;
+    const used = codes
+        .filter(c => c.code.startsWith(prefix))
+        .map(c => parseInt(c.code.slice(-4)))
+        .sort((a, b) => a - b);
+
+    let next = 1;
+    for (const n of used) {
+        if (n === next) next++;
+        else break;
+    }
+    return String(next).padStart(4, '0');
+}
+
+function updatePreview() {
+    const vals = selectors.map(id => document.getElementById(id).value);
+    const serial = document.getElementById('serial').value;
+    const allSelected = vals.every(v => v !== '');
+
+    if (allSelected) {
+        // 自動帶入流水號
+        if (!serial) {
+            const next = getNextSerial(...vals);
+            document.getElementById('serial').placeholder = `下一個：${next}`;
+        }
+        const s = serial || getNextSerial(...vals);
+        const code = vals.join('') + s.padStart(4, '0');
+        document.getElementById('preview').textContent = code;
+        document.getElementById('addBtn').disabled = false;
+    } else {
+        document.getElementById('preview').textContent = '------';
+        document.getElementById('addBtn').disabled = true;
+    }
+}
+
+selectors.forEach(id => document.getElementById(id).addEventListener('change', updatePreview));
+document.getElementById('serial').addEventListener('input', function() {
+    this.value = this.value.replace(/\D/g, '').slice(0, 4);
+    updatePreview();
+});
+
+function showMsg(text, type) {
+    const el = document.getElementById('msg');
+    el.textContent = text;
+    el.className = 'msg ' + (type === 'error' ? 'msg-error' : 'msg-success');
+    el.style.display = 'block';
+    setTimeout(() => el.style.display = 'none', 4000);
+}
+
+function addCode() {
+    const vals = selectors.map(id => document.getElementById(id).value);
+    if (vals.some(v => v === '')) { showMsg('請選擇所有欄位', 'error'); return; }
+
+    let serial = document.getElementById('serial').value;
+    if (!serial) serial = getNextSerial(...vals);
+    serial = serial.padStart(4, '0');
+
+    if (parseInt(serial) < 1 || parseInt(serial) > 9999) {
+        showMsg('流水號必須在 0001 ~ 9999 之間', 'error'); return;
+    }
+
+    const code = vals.join('') + serial;
+    const codes = loadCodes();
+
+    if (codes.some(c => c.code === code)) {
+        showMsg(`編碼 ${code} 已經存在，不可重複使用！`, 'error'); return;
+    }
+
+    const desc = document.getElementById('desc').value.trim();
+    const labels = {
+        attr: {A:'成品',B:'半成品',C:'物料'},
+        source: {'1':'自製','2':'客供','3':'外購'},
+        grade: {N:'新品',R:'維修品'}
+    };
+    const materialEl = document.getElementById('material');
+    const materialLabel = materialEl.options[materialEl.selectedIndex].text.split(' - ')[1] || vals[2];
+
+    codes.push({
+        code,
+        attr: labels.attr[vals[0]],
+        source: labels.source[vals[1]],
+        material: materialLabel,
+        materialCode: vals[2],
+        grade: labels.grade[vals[3]],
+        desc,
+        date: new Date().toLocaleDateString('zh-TW')
+    });
+    saveCodes(codes);
+    showMsg(`編碼 ${code} 新增成功！`, 'success');
+    resetForm();
+    renderTable();
+}
+
+function resetForm() {
+    selectors.forEach(id => document.getElementById(id).value = '');
+    document.getElementById('serial').value = '';
+    document.getElementById('desc').value = '';
+    document.getElementById('preview').textContent = '------';
+    document.getElementById('addBtn').disabled = true;
+    document.getElementById('serial').placeholder = '自動帶入下一個可用號碼';
+}
+
+function deleteCode(code) {
+    if (!confirm(`確定要刪除編碼 ${code} 嗎？`)) return;
+    const codes = loadCodes().filter(c => c.code !== code);
+    saveCodes(codes);
+    renderTable();
+}
+
+function renderTable() {
+    const codes = loadCodes();
+    const query = document.getElementById('searchInput').value.trim().toLowerCase();
+    const filtered = query
+        ? codes.filter(c => c.code.toLowerCase().includes(query) || (c.desc && c.desc.toLowerCase().includes(query)))
+        : codes;
+
+    // Stats
+    document.getElementById('stats').innerHTML = `
+        <div class="stat-item">總編碼數 <strong>${codes.length}</strong></div>
+        <div class="stat-item">成品 <strong>${codes.filter(c=>c.attr==='成品').length}</strong></div>
+        <div class="stat-item">半成品 <strong>${codes.filter(c=>c.attr==='半成品').length}</strong></div>
+        <div class="stat-item">物料 <strong>${codes.filter(c=>c.attr==='物料').length}</strong></div>
+    `;
+
+    if (filtered.length === 0) {
+        document.getElementById('tableWrap').innerHTML = `<div class="empty-state">${query ? '找不到符合的編碼' : '尚未新增任何編碼'}</div>`;
+        return;
+    }
+
+    let html = `<table><thead><tr>
+        <th>編碼</th><th>屬性</th><th>來源</th><th>物料類型</th><th>品別</th><th>描述</th><th>建立日期</th><th></th>
+    </tr></thead><tbody>`;
+    filtered.slice().reverse().forEach(c => {
+        html += `<tr>
+            <td class="code-cell">${c.code}</td>
+            <td>${c.attr}</td><td>${c.source}</td><td>${c.materialCode} ${c.material}</td><td>${c.grade}</td>
+            <td>${c.desc || '-'}</td><td>${c.date}</td>
+            <td><button class="delete-btn" onclick="deleteCode('${c.code}')">刪除</button></td>
+        </tr>`;
+    });
+    html += '</tbody></table>';
+    document.getElementById('tableWrap').innerHTML = html;
+}
+
+function exportCSV() {
+    const codes = loadCodes();
+    if (!codes.length) { showMsg('沒有資料可匯出', 'error'); return; }
+    const header = '編碼,屬性,產品來源,物料類型代碼,物料類型,品別,描述,建立日期\n';
+    const rows = codes.map(c => `${c.code},${c.attr},${c.source},${c.materialCode},${c.material},${c.grade},"${c.desc || ''}",${c.date}`).join('\n');
+    const bom = '\uFEFF';
+    const blob = new Blob([bom + header + rows], {type: 'text/csv;charset=utf-8;'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `產品編碼_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+}
+
+function importCSV() { document.getElementById('csvFile').click(); }
+function handleImport(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(ev) {
+        const lines = ev.target.result.split('\n').filter(l => l.trim());
+        const codes = loadCodes();
+        let added = 0, skipped = 0;
+        for (let i = 1; i < lines.length; i++) {
+            const parts = lines[i].split(',');
+            if (parts.length < 6) continue;
+            const code = parts[0].trim();
+            if (!code || code.length < 10) continue;
+            if (codes.some(c => c.code === code)) { skipped++; continue; }
+            codes.push({
+                code,
+                attr: parts[1]?.trim() || '',
+                source: parts[2]?.trim() || '',
+                materialCode: parts[3]?.trim() || '',
+                material: parts[4]?.trim() || '',
+                grade: parts[5]?.trim() || '',
+                desc: (parts[6] || '').replace(/"/g, '').trim(),
+                date: parts[7]?.trim() || new Date().toLocaleDateString('zh-TW')
+            });
+            added++;
+        }
+        saveCodes(codes);
+        renderTable();
+        showMsg(`匯入完成：新增 ${added} 筆，跳過重複 ${skipped} 筆`, 'success');
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+}
+
+renderTable();
+</script>
+</body>
+</html>
