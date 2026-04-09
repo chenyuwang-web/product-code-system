@@ -81,6 +81,35 @@
         .stat-item strong { color: #1a73e8; font-size: 1.1rem; }
 
         .export-row { display: flex; gap: 10px; justify-content: flex-end; margin-bottom: 12px; }
+
+        .import-area {
+            border: 2px dashed #ccc; border-radius: 10px; padding: 20px;
+            text-align: center; transition: all 0.2s; cursor: pointer; position: relative;
+        }
+        .import-area:hover, .import-area.dragover { border-color: #1a73e8; background: #e8f0fe; }
+        .import-area p { color: #777; font-size: 0.9rem; margin-bottom: 8px; }
+        .import-area .hint { font-size: 0.8rem; color: #aaa; }
+
+        .import-textarea {
+            width: 100%; min-height: 120px; border: 1.5px solid #ddd; border-radius: 8px;
+            padding: 12px; font-family: "Consolas", monospace; font-size: 0.9rem;
+            resize: vertical; margin-top: 12px;
+        }
+        .import-textarea:focus { border-color: #1a73e8; outline: none; }
+        .import-textarea::placeholder { font-family: "Microsoft JhengHei", sans-serif; color: #bbb; }
+
+        .import-preview { margin-top: 14px; }
+        .import-preview table { font-size: 0.85rem; }
+        .import-preview .valid { color: #2e7d32; }
+        .import-preview .invalid { color: #c62828; }
+        .import-preview .duplicate { color: #e65100; }
+
+        .tab-row { display: flex; gap: 0; margin-bottom: 18px; border-bottom: 2px solid #eee; }
+        .tab-btn {
+            padding: 10px 20px; border: none; background: none; font-size: 0.95rem;
+            color: #888; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; font-weight: 600;
+        }
+        .tab-btn.active { color: #1a73e8; border-bottom-color: #1a73e8; }
     </style>
 </head>
 <body>
@@ -171,6 +200,43 @@
         </div>
     </div>
 
+    <!-- 批次匯入 -->
+    <div class="card">
+        <h2>批次匯入既有編碼</h2>
+        <div class="tab-row">
+            <button class="tab-btn active" onclick="switchImportTab('paste',this)">貼上編碼</button>
+            <button class="tab-btn" onclick="switchImportTab('file',this)">上傳檔案 (Excel / CSV)</button>
+        </div>
+
+        <div id="importPasteTab">
+            <p style="font-size:0.85rem;color:#555;margin-bottom:8px;">將已有的編碼直接貼上，每行一筆。可以只貼編碼，或用逗號/Tab 分隔「編碼, 描述」。系統會自動判讀格式。</p>
+            <textarea class="import-textarea" id="bulkInput" placeholder="範例（以下任一格式皆可）：&#10;A1ELEN0001&#10;A1ELEN0001, 主控制板&#10;A1ELEN0001&#9;主控制板&#10;C3MECN0012, 鋁合金支架 V2"></textarea>
+            <div class="btn-row" style="justify-content:flex-start;">
+                <button class="btn btn-secondary" onclick="previewBulk()">預覽判讀結果</button>
+                <button class="btn btn-primary" id="bulkAddBtn" onclick="confirmBulk()" style="display:none;">確認匯入</button>
+                <button class="btn btn-secondary" onclick="clearBulk()" style="display:none;" id="bulkClearBtn">清除</button>
+            </div>
+            <div id="bulkMsg" class="msg"></div>
+            <div id="bulkPreview" class="import-preview"></div>
+        </div>
+
+        <div id="importFileTab" style="display:none;">
+            <div class="import-area" id="dropZone" onclick="document.getElementById('xlsxFile').click();"
+                 ondragover="event.preventDefault();this.classList.add('dragover');"
+                 ondragleave="this.classList.remove('dragover');"
+                 ondrop="event.preventDefault();this.classList.remove('dragover');handleFileDrop(event);">
+                <p>點擊選擇檔案，或將檔案拖曳到此處</p>
+                <p class="hint">支援 .xlsx / .csv 檔案，系統會自動搜尋符合編碼格式的欄位</p>
+            </div>
+            <input type="file" id="xlsxFile" accept=".xlsx,.csv" style="display:none" onchange="handleFileSelect(event)">
+            <div id="fileMsg" class="msg"></div>
+            <div id="filePreview" class="import-preview"></div>
+            <div class="btn-row" style="justify-content:flex-start;">
+                <button class="btn btn-primary" id="fileAddBtn" onclick="confirmFileBulk()" style="display:none;">確認匯入</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 已使用編碼清單 -->
     <div class="card">
         <h2>已使用編碼清單</h2>
@@ -191,6 +257,7 @@
     </div>
 </div>
 
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <script>
 const STORAGE_KEY = 'product_codes';
 const selectors = ['attr', 'source', 'material', 'grade'];
@@ -395,6 +462,222 @@ function handleImport(e) {
     };
     reader.readAsText(file);
     e.target.value = '';
+}
+
+// === 編碼解析 ===
+const VALID_ATTR = ['A','B','C'];
+const VALID_SOURCE = ['1','2','3'];
+const VALID_MATERIAL = ['ELE','PNE','MEC','PAC','PLA','CHE','FAS','TRA','RUB','CAB','OPT','CON','RSP','FOS','LMB','FOU','OVT','ARS','ANJ','OHB','AOI'];
+const VALID_GRADE = ['N','R'];
+
+const ATTR_LABEL = {A:'成品',B:'半成品',C:'物料'};
+const SOURCE_LABEL = {'1':'自製','2':'客供','3':'外購'};
+const GRADE_LABEL = {N:'新品',R:'維修品'};
+const MATERIAL_LABEL = {ELE:'電子電控類',PNE:'氣動氣路類',MEC:'金屬材料/加工件類',PAC:'包裝/紙材類',PLA:'塑膠原料類',CHE:'化學耗材類',FAS:'標準鎖附五金類',TRA:'傳動元件類',RUB:'橡膠/矽膠類',CAB:'線材/線纜類',OPT:'光學元件類',CON:'一般耗材類',RSP:'Reticle SMIF Pod',FOS:'Front Opening Shipping Box',LMB:'Large Mask Box',FOU:'Front Opening Unified Pod',OVT:'Oval Tube',ARS:'Automatic RSP Assembly Machine',ANJ:'Automatic Night Jar Measurement System',OHB:'Overhead Hoist Buffer',AOI:'Automated Optical Inspection'};
+
+function parseCode(str) {
+    str = str.trim().toUpperCase();
+    if (str.length !== 10) return null;
+    const attr = str[0], source = str[1], mat = str.substring(2,5), grade = str[5], serial = str.substring(6,10);
+    if (!VALID_ATTR.includes(attr) || !VALID_SOURCE.includes(source) || !VALID_MATERIAL.includes(mat) || !VALID_GRADE.includes(grade) || !/^\d{4}$/.test(serial) || parseInt(serial) < 1) return null;
+    return { code: str, attr: ATTR_LABEL[attr], source: SOURCE_LABEL[source], materialCode: mat, material: MATERIAL_LABEL[mat], grade: GRADE_LABEL[grade], serial };
+}
+
+// === Tab 切換 ===
+function switchImportTab(tab, btn) {
+    document.getElementById('importPasteTab').style.display = tab === 'paste' ? '' : 'none';
+    document.getElementById('importFileTab').style.display = tab === 'file' ? '' : 'none';
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+}
+
+// === 貼上匯入 ===
+let bulkParsed = [];
+
+function previewBulk() {
+    const raw = document.getElementById('bulkInput').value.trim();
+    if (!raw) { showBulkMsg('請先貼上編碼資料', 'error'); return; }
+    const lines = raw.split('\n').filter(l => l.trim());
+    const codes = loadCodes();
+    bulkParsed = [];
+
+    lines.forEach(line => {
+        const parts = line.split(/[,\t]+/).map(s => s.trim());
+        const codeStr = parts[0];
+        const desc = parts.slice(1).join(', ');
+        const parsed = parseCode(codeStr);
+        if (parsed) {
+            const dup = codes.some(c => c.code === parsed.code) || bulkParsed.some(p => p.status !== 'invalid' && p.code === parsed.code);
+            bulkParsed.push({ ...parsed, desc, status: dup ? 'duplicate' : 'valid' });
+        } else {
+            bulkParsed.push({ code: codeStr, desc, status: 'invalid', reason: '格式不符' });
+        }
+    });
+
+    renderBulkPreview();
+}
+
+function renderBulkPreview() {
+    const valid = bulkParsed.filter(p => p.status === 'valid').length;
+    const dup = bulkParsed.filter(p => p.status === 'duplicate').length;
+    const invalid = bulkParsed.filter(p => p.status === 'invalid').length;
+
+    let html = `<p style="font-size:0.85rem;margin-bottom:10px;">判讀結果：<span class="valid">可匯入 ${valid} 筆</span>`;
+    if (dup) html += `、<span class="duplicate">重複 ${dup} 筆</span>`;
+    if (invalid) html += `、<span class="invalid">無法辨識 ${invalid} 筆</span>`;
+    html += `</p>`;
+
+    html += `<table><thead><tr><th>狀態</th><th>編碼</th><th>屬性</th><th>來源</th><th>物料類型</th><th>品別</th><th>描述</th></tr></thead><tbody>`;
+    bulkParsed.forEach(p => {
+        const cls = p.status === 'valid' ? 'valid' : p.status === 'duplicate' ? 'duplicate' : 'invalid';
+        const statusText = p.status === 'valid' ? '可匯入' : p.status === 'duplicate' ? '已存在' : '無法辨識';
+        html += `<tr><td class="${cls}">${statusText}</td><td class="code-cell">${p.code || '-'}</td>`;
+        if (p.status !== 'invalid') {
+            html += `<td>${p.attr}</td><td>${p.source}</td><td>${p.materialCode} ${p.material}</td><td>${p.grade}</td>`;
+        } else {
+            html += `<td colspan="4" style="color:#c62828;">${p.reason}</td>`;
+        }
+        html += `<td>${p.desc || '-'}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    document.getElementById('bulkPreview').innerHTML = html;
+
+    document.getElementById('bulkAddBtn').style.display = valid > 0 ? '' : 'none';
+    document.getElementById('bulkClearBtn').style.display = '';
+}
+
+function confirmBulk() {
+    const codes = loadCodes();
+    const toAdd = bulkParsed.filter(p => p.status === 'valid');
+    toAdd.forEach(p => {
+        codes.push({ code: p.code, attr: p.attr, source: p.source, material: p.material, materialCode: p.materialCode, grade: p.grade, desc: p.desc || '', date: new Date().toLocaleDateString('zh-TW') });
+    });
+    saveCodes(codes);
+    showBulkMsg(`成功匯入 ${toAdd.length} 筆編碼！`, 'success');
+    clearBulk();
+    renderTable();
+}
+
+function clearBulk() {
+    document.getElementById('bulkInput').value = '';
+    document.getElementById('bulkPreview').innerHTML = '';
+    document.getElementById('bulkAddBtn').style.display = 'none';
+    document.getElementById('bulkClearBtn').style.display = 'none';
+    bulkParsed = [];
+}
+
+function showBulkMsg(text, type) {
+    const el = document.getElementById('bulkMsg');
+    el.textContent = text;
+    el.className = 'msg ' + (type === 'error' ? 'msg-error' : 'msg-success');
+    el.style.display = 'block';
+    setTimeout(() => el.style.display = 'none', 4000);
+}
+
+// === 檔案匯入 (Excel / CSV) ===
+let fileParsed = [];
+
+function handleFileDrop(e) {
+    const file = e.dataTransfer.files[0];
+    if (file) processFile(file);
+}
+function handleFileSelect(e) {
+    const file = e.target.files[0];
+    if (file) processFile(file);
+    e.target.value = '';
+}
+
+function processFile(file) {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        let allCodes = [];
+        if (file.name.endsWith('.csv')) {
+            const text = e.target.result;
+            const lines = text.split('\n').filter(l => l.trim());
+            lines.forEach(line => {
+                const parts = line.split(/[,\t]+/).map(s => s.trim().replace(/^"|"$/g, ''));
+                parts.forEach((p, idx) => {
+                    const parsed = parseCode(p);
+                    if (parsed) {
+                        const desc = parts.filter((_, i) => i !== idx && !/^[A-C][123][A-Z]{3}[NR]\d{4}$/i.test(_)).join(', ');
+                        allCodes.push({ ...parsed, desc });
+                    }
+                });
+            });
+        } else {
+            const data = new Uint8Array(e.target.result);
+            const wb = XLSX.read(data, { type: 'array' });
+            wb.SheetNames.forEach(name => {
+                const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: '' });
+                rows.forEach(row => {
+                    let rowDesc = '';
+                    let rowCodes = [];
+                    row.forEach(cell => {
+                        const s = String(cell).trim();
+                        const parsed = parseCode(s);
+                        if (parsed) rowCodes.push(parsed);
+                        else if (s && !/^\d+$/.test(s)) rowDesc += (rowDesc ? ', ' : '') + s;
+                    });
+                    rowCodes.forEach(c => allCodes.push({ ...c, desc: rowDesc }));
+                });
+            });
+        }
+
+        const codes = loadCodes();
+        fileParsed = [];
+        const seen = new Set();
+        allCodes.forEach(c => {
+            if (seen.has(c.code)) return;
+            seen.add(c.code);
+            const dup = codes.some(ex => ex.code === c.code);
+            fileParsed.push({ ...c, status: dup ? 'duplicate' : 'valid' });
+        });
+
+        if (fileParsed.length === 0) {
+            showFileMsg('檔案中找不到符合編碼格式的資料', 'error');
+            return;
+        }
+
+        const valid = fileParsed.filter(p => p.status === 'valid').length;
+        const dup = fileParsed.filter(p => p.status === 'duplicate').length;
+
+        let html = `<p style="font-size:0.85rem;margin:14px 0 10px;">從 <strong>${file.name}</strong> 偵測到 ${fileParsed.length} 筆編碼：<span class="valid">可匯入 ${valid} 筆</span>`;
+        if (dup) html += `、<span class="duplicate">重複 ${dup} 筆</span>`;
+        html += `</p>`;
+        html += `<table><thead><tr><th>狀態</th><th>編碼</th><th>屬性</th><th>來源</th><th>物料類型</th><th>品別</th><th>描述</th></tr></thead><tbody>`;
+        fileParsed.forEach(p => {
+            const cls = p.status === 'valid' ? 'valid' : 'duplicate';
+            const statusText = p.status === 'valid' ? '可匯入' : '已存在';
+            html += `<tr><td class="${cls}">${statusText}</td><td class="code-cell">${p.code}</td><td>${p.attr}</td><td>${p.source}</td><td>${p.materialCode} ${p.material}</td><td>${p.grade}</td><td>${p.desc || '-'}</td></tr>`;
+        });
+        html += '</tbody></table>';
+        document.getElementById('filePreview').innerHTML = html;
+        document.getElementById('fileAddBtn').style.display = valid > 0 ? '' : 'none';
+    };
+    if (file.name.endsWith('.csv')) reader.readAsText(file);
+    else reader.readAsArrayBuffer(file);
+}
+
+function confirmFileBulk() {
+    const codes = loadCodes();
+    const toAdd = fileParsed.filter(p => p.status === 'valid');
+    toAdd.forEach(p => {
+        codes.push({ code: p.code, attr: p.attr, source: p.source, material: p.material, materialCode: p.materialCode, grade: p.grade, desc: p.desc || '', date: new Date().toLocaleDateString('zh-TW') });
+    });
+    saveCodes(codes);
+    showFileMsg(`成功匯入 ${toAdd.length} 筆編碼！`, 'success');
+    document.getElementById('filePreview').innerHTML = '';
+    document.getElementById('fileAddBtn').style.display = 'none';
+    fileParsed = [];
+    renderTable();
+}
+
+function showFileMsg(text, type) {
+    const el = document.getElementById('fileMsg');
+    el.textContent = text;
+    el.className = 'msg ' + (type === 'error' ? 'msg-error' : 'msg-success');
+    el.style.display = 'block';
+    setTimeout(() => el.style.display = 'none', 4000);
 }
 
 renderTable();
