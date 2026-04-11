@@ -216,6 +216,94 @@
         </div>
     </div>
 
+    <!-- BOM 自動編碼 -->
+    <div class="card">
+        <h2>BOM 自動編碼</h2>
+        <p style="font-size:0.85rem;color:#555;margin-bottom:14px;">上傳客戶 BOM 檔案，系統會列出所有品項，讓你指定編碼屬性後自動產生編碼。</p>
+
+        <div class="import-area" onclick="document.getElementById('bomFile').click();"
+             ondragover="event.preventDefault();this.classList.add('dragover');"
+             ondragleave="this.classList.remove('dragover');"
+             ondrop="event.preventDefault();this.classList.remove('dragover');handleBomDrop(event);">
+            <p>點擊選擇 BOM 檔案，或拖曳到此處</p>
+            <p class="hint">支援 .xlsx / .csv，系統會自動讀取所有品項</p>
+        </div>
+        <input type="file" id="bomFile" accept=".xlsx,.csv" style="display:none" onchange="handleBomSelect(event)">
+
+        <div id="bomBatchArea" style="display:none;margin-top:18px;">
+            <h3 style="font-size:1rem;color:#333;margin-bottom:12px;">批次設定（套用到所有品項）</h3>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>屬性（全部套用）</label>
+                    <select id="bomAttr" onchange="updateBomPreview()">
+                        <option value="">-- 各別指定 --</option>
+                        <option value="A">A - 成品</option>
+                        <option value="B">B - 半成品</option>
+                        <option value="C">C - 物料</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>產品來源（全部套用）</label>
+                    <select id="bomSource" onchange="updateBomPreview()">
+                        <option value="">-- 各別指定 --</option>
+                        <option value="1">1 - 自製產品</option>
+                        <option value="2">2 - 客供產品</option>
+                        <option value="3">3 - 外購</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>物料類型（全部套用）</label>
+                    <select id="bomMaterial" onchange="updateBomPreview()">
+                        <option value="">-- 各別指定 --</option>
+                        <option value="ELE">ELE - 電子電控類</option>
+                        <option value="PNE">PNE - 氣動氣路類</option>
+                        <option value="MEC">MEC - 金屬材料/加工件類</option>
+                        <option value="PAC">PAC - 包裝/紙材類</option>
+                        <option value="PLA">PLA - 塑膠原料類</option>
+                        <option value="CHE">CHE - 化學耗材類</option>
+                        <option value="FAS">FAS - 標準鎖附五金類</option>
+                        <option value="TRA">TRA - 傳動元件類</option>
+                        <option value="RUB">RUB - 橡膠/矽膠類</option>
+                        <option value="CAB">CAB - 線材/線纜類</option>
+                        <option value="OPT">OPT - 光學元件類</option>
+                        <option value="CON">CON - 一般耗材類</option>
+                        <option value="RSP">RSP - Reticle SMIF Pod</option>
+                        <option value="FOS">FOS - Front Opening Shipping Box</option>
+                        <option value="LMB">LMB - Large Mask Box</option>
+                        <option value="FOU">FOU - Front Opening Unified Pod</option>
+                        <option value="OVT">OVT - Oval Tube</option>
+                        <option value="ARS">ARS - Automatic RSP Assembly Machine</option>
+                        <option value="ANJ">ANJ - Automatic Night Jar Measurement System</option>
+                        <option value="OHB">OHB - Overhead Hoist Buffer</option>
+                        <option value="AOI">AOI - Automated Optical Inspection</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>品別（全部套用）</label>
+                    <select id="bomGrade" onchange="updateBomPreview()">
+                        <option value="">-- 各別指定 --</option>
+                        <option value="N">N - 新品</option>
+                        <option value="R">R - 維修品</option>
+                    </select>
+                </div>
+            </div>
+
+            <div style="margin-top:16px;overflow-x:auto;">
+                <table id="bomTable"><thead><tr>
+                    <th><input type="checkbox" id="bomCheckAll" checked onchange="toggleBomAll(this.checked)"></th>
+                    <th>品項名稱</th><th>屬性</th><th>來源</th><th>物料類型</th><th>品別</th><th>產生編碼</th>
+                </tr></thead><tbody id="bomBody"></tbody></table>
+            </div>
+
+            <div id="bomMsg" class="msg"></div>
+            <div class="btn-row" style="justify-content:flex-start;margin-top:16px;">
+                <button class="btn btn-primary" onclick="confirmBom()">確認編碼並匯入</button>
+                <button class="btn btn-secondary" onclick="clearBom()">清除</button>
+                <button class="btn btn-secondary" onclick="exportBomCSV()">匯出編碼結果 CSV</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 已使用編碼清單 -->
     <div class="card">
         <h2>已使用編碼清單</h2>
@@ -598,6 +686,201 @@ async function confirmFileBulk() {
         await loadCodes();
         renderTable();
     } catch (e) { showMsg('匯入失敗：' + e.message, 'error', 'fileMsg'); }
+}
+
+// === BOM 自動編碼 ===
+let bomItems = [];
+
+function handleBomDrop(e) { if (e.dataTransfer.files[0]) processBom(e.dataTransfer.files[0]); }
+function handleBomSelect(e) { if (e.target.files[0]) processBom(e.target.files[0]); e.target.value = ''; }
+
+function processBom(file) {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        let rows = [];
+        if (file.name.endsWith('.csv')) {
+            const lines = e.target.result.split('\n').filter(l => l.trim());
+            const header = lines[0].split(/[,\t]+/).map(s => s.trim().replace(/^"|"$/g, ''));
+            for (let i = 1; i < lines.length; i++) {
+                const parts = lines[i].split(/[,\t]+/).map(s => s.trim().replace(/^"|"$/g, ''));
+                if (parts.filter(p => p).length === 0) continue;
+                const obj = {};
+                header.forEach((h, idx) => obj[h] = parts[idx] || '');
+                rows.push(obj);
+            }
+        } else {
+            const data = new Uint8Array(e.target.result);
+            const wb = XLSX.read(data, { type: 'array' });
+            const ws = wb.Sheets[wb.SheetNames[0]];
+            rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+        }
+
+        if (!rows.length) { showMsg('檔案中沒有找到資料', 'error', 'bomMsg'); return; }
+
+        bomItems = rows.map((row, i) => {
+            const name = Object.values(row).filter(v => v && typeof v === 'string' && v.length > 1).join(' / ');
+            return { id: i, name: name || `品項 ${i+1}`, rawData: row, checked: true, attr: '', source: '', material: '', grade: '', generatedCode: '' };
+        });
+
+        document.getElementById('bomBatchArea').style.display = '';
+        renderBomTable();
+    };
+    if (file.name.endsWith('.csv')) reader.readAsText(file);
+    else reader.readAsArrayBuffer(file);
+}
+
+function toggleBomAll(checked) {
+    bomItems.forEach(item => item.checked = checked);
+    renderBomTable();
+}
+
+function renderBomTable() {
+    const batchAttr = document.getElementById('bomAttr').value;
+    const batchSource = document.getElementById('bomSource').value;
+    const batchMat = document.getElementById('bomMaterial').value;
+    const batchGrade = document.getElementById('bomGrade').value;
+
+    const selOpts = (field, options, itemVal, batchVal) => {
+        const val = batchVal || itemVal;
+        let html = `<select onchange="bomItems[${0}].${field}=this.value;updateBomPreview()" style="padding:4px 6px;border-radius:6px;border:1px solid #ddd;font-size:0.85rem;"${batchVal ? ' disabled' : ''}>`;
+        html += `<option value="">--</option>`;
+        options.forEach(([v, l]) => html += `<option value="${v}"${val === v ? ' selected' : ''}>${v}</option>`);
+        return html + '</select>';
+    };
+
+    let html = '';
+    bomItems.forEach((item, idx) => {
+        const a = batchAttr || item.attr;
+        const s = batchSource || item.source;
+        const m = batchMat || item.material;
+        const g = batchGrade || item.grade;
+
+        let code = '';
+        if (a && s && m && g) {
+            const serial = getNextBomSerial(a, s, m, g, idx);
+            code = a + s + m + g + serial;
+        }
+        item.generatedCode = code;
+
+        const attrOpts = [['A','成品'],['B','半成品'],['C','物料']];
+        const srcOpts = [['1','自製'],['2','客供'],['3','外購']];
+        const matOpts = VALID_MATERIAL.map(v => [v, v]);
+        const gradeOpts = [['N','新品'],['R','維修品']];
+
+        html += `<tr>
+            <td><input type="checkbox" ${item.checked ? 'checked' : ''} onchange="bomItems[${idx}].checked=this.checked"></td>
+            <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${item.name}">${item.name}</td>
+            <td><select onchange="bomItems[${idx}].attr=this.value;updateBomPreview()" style="padding:4px;border-radius:6px;border:1px solid #ddd;font-size:0.85rem;"${batchAttr ? ' disabled' : ''}>
+                <option value="">--</option>${attrOpts.map(([v]) => `<option value="${v}"${a===v?' selected':''}>${v}</option>`).join('')}</select></td>
+            <td><select onchange="bomItems[${idx}].source=this.value;updateBomPreview()" style="padding:4px;border-radius:6px;border:1px solid #ddd;font-size:0.85rem;"${batchSource ? ' disabled' : ''}>
+                <option value="">--</option>${srcOpts.map(([v]) => `<option value="${v}"${s===v?' selected':''}>${v}</option>`).join('')}</select></td>
+            <td><select onchange="bomItems[${idx}].material=this.value;updateBomPreview()" style="padding:4px;border-radius:6px;border:1px solid #ddd;font-size:0.85rem;"${batchMat ? ' disabled' : ''}>
+                <option value="">--</option>${matOpts.map(([v]) => `<option value="${v}"${m===v?' selected':''}>${v}</option>`).join('')}</select></td>
+            <td><select onchange="bomItems[${idx}].grade=this.value;updateBomPreview()" style="padding:4px;border-radius:6px;border:1px solid #ddd;font-size:0.85rem;"${batchGrade ? ' disabled' : ''}>
+                <option value="">--</option>${gradeOpts.map(([v]) => `<option value="${v}"${g===v?' selected':''}>${v}</option>`).join('')}</select></td>
+            <td class="code-cell">${code || '<span style="color:#aaa;">待指定</span>'}</td>
+        </tr>`;
+    });
+    document.getElementById('bomBody').innerHTML = html;
+}
+
+function getNextBomSerial(attr, source, material, grade, currentIdx) {
+    const prefix = attr + source + material + grade;
+    const usedInDb = codesCache.filter(c => c.code.startsWith(prefix)).map(c => parseInt(c.code.slice(-4)));
+    const usedInBom = [];
+    const batchAttr = document.getElementById('bomAttr').value;
+    const batchSource = document.getElementById('bomSource').value;
+    const batchMat = document.getElementById('bomMaterial').value;
+    const batchGrade = document.getElementById('bomGrade').value;
+
+    for (let i = 0; i < currentIdx; i++) {
+        const item = bomItems[i];
+        if (!item.checked) continue;
+        const ia = batchAttr || item.attr;
+        const is = batchSource || item.source;
+        const im = batchMat || item.material;
+        const ig = batchGrade || item.grade;
+        if ((ia + is + im + ig) === prefix && item.generatedCode) {
+            usedInBom.push(parseInt(item.generatedCode.slice(-4)));
+        }
+    }
+
+    const allUsed = [...usedInDb, ...usedInBom].sort((a, b) => a - b);
+    let next = 1;
+    for (const n of allUsed) { if (n === next) next++; else if (n > next) break; }
+    return String(next).padStart(4, '0');
+}
+
+function updateBomPreview() { renderBomTable(); }
+
+async function confirmBom() {
+    const toAdd = bomItems.filter(item => item.checked && item.generatedCode);
+    if (!toAdd.length) { showMsg('沒有可匯入的品項，請確認已指定所有屬性', 'error', 'bomMsg'); return; }
+
+    const incomplete = bomItems.filter(item => item.checked && !item.generatedCode);
+    if (incomplete.length) {
+        if (!confirm(`有 ${incomplete.length} 筆品項尚未指定完整屬性，將被跳過。是否繼續？`)) return;
+    }
+
+    const batchAttr = document.getElementById('bomAttr').value;
+    const batchSource = document.getElementById('bomSource').value;
+    const batchMat = document.getElementById('bomMaterial').value;
+    const batchGrade = document.getElementById('bomGrade').value;
+
+    const records = toAdd.map(item => {
+        const a = batchAttr || item.attr;
+        const s = batchSource || item.source;
+        const m = batchMat || item.material;
+        const g = batchGrade || item.grade;
+        return {
+            code: item.generatedCode,
+            attr: ATTR_LABEL[a],
+            source: SOURCE_LABEL[s],
+            material_code: m,
+            material: MATERIAL_LABEL[m],
+            grade: GRADE_LABEL[g],
+            description: item.name
+        };
+    });
+
+    try {
+        await supaFetch(TABLE, {
+            method: 'POST',
+            headers: { 'Prefer': 'resolution=ignore-duplicates,return=representation' },
+            body: records
+        });
+        showMsg(`成功編碼並匯入 ${records.length} 筆！`, 'success', 'bomMsg');
+        await loadCodes();
+        renderTable();
+    } catch (e) { showMsg('匯入失敗：' + e.message, 'error', 'bomMsg'); }
+}
+
+function clearBom() {
+    bomItems = [];
+    document.getElementById('bomBatchArea').style.display = 'none';
+    document.getElementById('bomBody').innerHTML = '';
+    ['bomAttr','bomSource','bomMaterial','bomGrade'].forEach(id => document.getElementById(id).value = '');
+}
+
+function exportBomCSV() {
+    const items = bomItems.filter(item => item.checked && item.generatedCode);
+    if (!items.length) { showMsg('沒有已編碼的品項可匯出', 'error', 'bomMsg'); return; }
+    const batchAttr = document.getElementById('bomAttr').value;
+    const batchSource = document.getElementById('bomSource').value;
+    const batchMat = document.getElementById('bomMaterial').value;
+    const batchGrade = document.getElementById('bomGrade').value;
+
+    const header = '產品編碼,屬性,產品來源,物料類型代碼,物料類型,品別,品項名稱\n';
+    const rows = items.map(item => {
+        const a = batchAttr || item.attr;
+        const s = batchSource || item.source;
+        const m = batchMat || item.material;
+        const g = batchGrade || item.grade;
+        return `${item.generatedCode},${ATTR_LABEL[a]},${SOURCE_LABEL[s]},${m},${MATERIAL_LABEL[m]},${GRADE_LABEL[g]},"${item.name}"`;
+    }).join('\n');
+    const blob = new Blob(['\uFEFF' + header + rows], {type: 'text/csv;charset=utf-8;'});
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = `BOM編碼結果_${new Date().toISOString().slice(0,10)}.csv`; a.click();
 }
 
 // === 初始化 ===
