@@ -23,9 +23,7 @@
         }
         .card h2 { font-size: 1.2rem; color: #333; margin-bottom: 20px; border-left: 4px solid #1a73e8; padding-left: 12px; }
 
-        .form-grid {
-            display: grid; grid-template-columns: 1fr 1fr; gap: 18px;
-        }
+        .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
         @media (max-width: 600px) { .form-grid { grid-template-columns: 1fr; } }
 
         .form-group { display: flex; flex-direction: column; }
@@ -36,28 +34,17 @@
         }
         .form-group select:focus, .form-group input:focus { border-color: #1a73e8; outline: none; background: #fff; }
 
-        .preview-box {
-            background: #e8f0fe; border-radius: 10px; padding: 20px;
-            text-align: center; margin-top: 20px;
-        }
+        .preview-box { background: #e8f0fe; border-radius: 10px; padding: 20px; text-align: center; margin-top: 20px; }
         .preview-box .label { font-size: 0.85rem; color: #555; }
-        .preview-box .code {
-            font-size: 2rem; font-weight: 700; color: #1a73e8;
-            letter-spacing: 3px; margin-top: 6px; font-family: "Consolas", monospace;
-        }
+        .preview-box .code { font-size: 2rem; font-weight: 700; color: #1a73e8; letter-spacing: 3px; margin-top: 6px; font-family: "Consolas", monospace; }
 
         .btn-row { display: flex; gap: 12px; margin-top: 20px; justify-content: center; flex-wrap: wrap; }
-        .btn {
-            padding: 12px 32px; border: none; border-radius: 8px; font-size: 1rem;
-            cursor: pointer; font-weight: 600; transition: all 0.2s;
-        }
+        .btn { padding: 12px 32px; border: none; border-radius: 8px; font-size: 1rem; cursor: pointer; font-weight: 600; transition: all 0.2s; }
         .btn-primary { background: #1a73e8; color: #fff; }
         .btn-primary:hover { background: #1558b0; }
         .btn-primary:disabled { background: #aaa; cursor: not-allowed; }
         .btn-secondary { background: #e0e0e0; color: #333; }
         .btn-secondary:hover { background: #d0d0d0; }
-        .btn-danger { background: #d32f2f; color: #fff; }
-        .btn-danger:hover { background: #b71c1c; }
 
         .msg { padding: 12px 16px; border-radius: 8px; margin-top: 14px; font-size: 0.9rem; display: none; }
         .msg-success { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
@@ -82,19 +69,12 @@
 
         .export-row { display: flex; gap: 10px; justify-content: flex-end; margin-bottom: 12px; }
 
-        .import-area {
-            border: 2px dashed #ccc; border-radius: 10px; padding: 20px;
-            text-align: center; transition: all 0.2s; cursor: pointer; position: relative;
-        }
+        .import-area { border: 2px dashed #ccc; border-radius: 10px; padding: 20px; text-align: center; transition: all 0.2s; cursor: pointer; }
         .import-area:hover, .import-area.dragover { border-color: #1a73e8; background: #e8f0fe; }
         .import-area p { color: #777; font-size: 0.9rem; margin-bottom: 8px; }
         .import-area .hint { font-size: 0.8rem; color: #aaa; }
 
-        .import-textarea {
-            width: 100%; min-height: 120px; border: 1.5px solid #ddd; border-radius: 8px;
-            padding: 12px; font-family: "Consolas", monospace; font-size: 0.9rem;
-            resize: vertical; margin-top: 12px;
-        }
+        .import-textarea { width: 100%; min-height: 120px; border: 1.5px solid #ddd; border-radius: 8px; padding: 12px; font-family: "Consolas", monospace; font-size: 0.9rem; resize: vertical; margin-top: 12px; }
         .import-textarea:focus { border-color: #1a73e8; outline: none; }
         .import-textarea::placeholder { font-family: "Microsoft JhengHei", sans-serif; color: #bbb; }
 
@@ -105,22 +85,26 @@
         .import-preview .duplicate { color: #e65100; }
 
         .tab-row { display: flex; gap: 0; margin-bottom: 18px; border-bottom: 2px solid #eee; }
-        .tab-btn {
-            padding: 10px 20px; border: none; background: none; font-size: 0.95rem;
-            color: #888; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; font-weight: 600;
-        }
+        .tab-btn { padding: 10px 20px; border: none; background: none; font-size: 0.95rem; color: #888; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; font-weight: 600; }
         .tab-btn.active { color: #1a73e8; border-bottom-color: #1a73e8; }
+
+        .sync-status { font-size: 0.8rem; opacity: 0.85; margin-top: 4px; }
+        .sync-ok { color: #a5d6a7; }
+        .sync-err { color: #ef9a9a; }
+        .loading-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.8); display: flex; justify-content: center; align-items: center; z-index: 9999; font-size: 1.2rem; color: #1a73e8; }
     </style>
 </head>
 <body>
 
+<div id="loadingOverlay" class="loading-overlay">載入資料中...</div>
+
 <div class="header">
     <h1>產品編碼系統</h1>
     <p>編碼格式：屬性(1) + 產品來源(1) + 物料類型(3) + 品別(1) + 流水號(4)</p>
+    <div class="sync-status" id="syncStatus"></div>
 </div>
 
 <div class="container">
-    <!-- 編碼產生器 -->
     <div class="card">
         <h2>產生新編碼</h2>
         <div class="form-grid">
@@ -186,14 +170,11 @@
                 <input type="text" id="serial" placeholder="自動帶入下一個可用號碼" maxlength="4">
             </div>
         </div>
-
         <div class="preview-box">
             <div class="label">編碼預覽</div>
             <div class="code" id="preview">------</div>
         </div>
-
         <div id="msg" class="msg"></div>
-
         <div class="btn-row">
             <button class="btn btn-primary" id="addBtn" onclick="addCode()" disabled>確認新增</button>
             <button class="btn btn-secondary" onclick="resetForm()">清除重填</button>
@@ -207,7 +188,6 @@
             <button class="tab-btn active" onclick="switchImportTab('paste',this)">貼上編碼</button>
             <button class="tab-btn" onclick="switchImportTab('file',this)">上傳檔案 (Excel / CSV)</button>
         </div>
-
         <div id="importPasteTab">
             <p style="font-size:0.85rem;color:#555;margin-bottom:8px;">將已有的編碼直接貼上，每行一筆。可以只貼編碼，或用逗號/Tab 分隔「編碼, 描述」。系統會自動判讀格式。</p>
             <textarea class="import-textarea" id="bulkInput" placeholder="範例（以下任一格式皆可）：&#10;A1ELEN0001&#10;A1ELEN0001, 主控制板&#10;A1ELEN0001&#9;主控制板&#10;C3MECN0012, 鋁合金支架 V2"></textarea>
@@ -219,7 +199,6 @@
             <div id="bulkMsg" class="msg"></div>
             <div id="bulkPreview" class="import-preview"></div>
         </div>
-
         <div id="importFileTab" style="display:none;">
             <div class="import-area" id="dropZone" onclick="document.getElementById('xlsxFile').click();"
                  ondragover="event.preventDefault();this.classList.add('dragover');"
@@ -240,228 +219,62 @@
     <!-- 已使用編碼清單 -->
     <div class="card">
         <h2>已使用編碼清單</h2>
-
         <div class="stats" id="stats"></div>
-
         <div class="search-bar">
             <input type="text" id="searchInput" placeholder="搜尋編碼或描述..." oninput="renderTable()">
         </div>
-
         <div class="export-row">
             <button class="btn btn-secondary" onclick="exportCSV()">匯出 CSV</button>
-            <button class="btn btn-secondary" onclick="importCSV()">匯入 CSV</button>
-            <input type="file" id="csvFile" accept=".csv" style="display:none" onchange="handleImport(event)">
         </div>
-
         <div id="tableWrap"></div>
     </div>
 </div>
 
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <script>
-const STORAGE_KEY = 'product_codes';
-const selectors = ['attr', 'source', 'material', 'grade'];
+// === Supabase 設定 ===
+const SUPABASE_URL = 'https://plsmpjrshznlmiooqlpq.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_s5UF9Ea96F1KK7B8BAa2Kw_8bMdAG8B';
+const TABLE = 'product_codes';
 
-function loadCodes() {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-}
-function saveCodes(codes) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(codes));
-}
-
-// 自動計算下一個流水號
-function getNextSerial(attr, source, material, grade) {
-    const codes = loadCodes();
-    const prefix = attr + source + material + grade;
-    const used = codes
-        .filter(c => c.code.startsWith(prefix))
-        .map(c => parseInt(c.code.slice(-4)))
-        .sort((a, b) => a - b);
-
-    let next = 1;
-    for (const n of used) {
-        if (n === next) next++;
-        else break;
-    }
-    return String(next).padStart(4, '0');
-}
-
-function updatePreview() {
-    const vals = selectors.map(id => document.getElementById(id).value);
-    const serial = document.getElementById('serial').value;
-    const allSelected = vals.every(v => v !== '');
-
-    if (allSelected) {
-        // 自動帶入流水號
-        if (!serial) {
-            const next = getNextSerial(...vals);
-            document.getElementById('serial').placeholder = `下一個：${next}`;
-        }
-        const s = serial || getNextSerial(...vals);
-        const code = vals.join('') + s.padStart(4, '0');
-        document.getElementById('preview').textContent = code;
-        document.getElementById('addBtn').disabled = false;
-    } else {
-        document.getElementById('preview').textContent = '------';
-        document.getElementById('addBtn').disabled = true;
-    }
-}
-
-selectors.forEach(id => document.getElementById(id).addEventListener('change', updatePreview));
-document.getElementById('serial').addEventListener('input', function() {
-    this.value = this.value.replace(/\D/g, '').slice(0, 4);
-    updatePreview();
-});
-
-function showMsg(text, type) {
-    const el = document.getElementById('msg');
-    el.textContent = text;
-    el.className = 'msg ' + (type === 'error' ? 'msg-error' : 'msg-success');
-    el.style.display = 'block';
-    setTimeout(() => el.style.display = 'none', 4000);
-}
-
-function addCode() {
-    const vals = selectors.map(id => document.getElementById(id).value);
-    if (vals.some(v => v === '')) { showMsg('請選擇所有欄位', 'error'); return; }
-
-    let serial = document.getElementById('serial').value;
-    if (!serial) serial = getNextSerial(...vals);
-    serial = serial.padStart(4, '0');
-
-    if (parseInt(serial) < 1 || parseInt(serial) > 9999) {
-        showMsg('流水號必須在 0001 ~ 9999 之間', 'error'); return;
-    }
-
-    const code = vals.join('') + serial;
-    const codes = loadCodes();
-
-    if (codes.some(c => c.code === code)) {
-        showMsg(`編碼 ${code} 已經存在，不可重複使用！`, 'error'); return;
-    }
-
-    const desc = document.getElementById('desc').value.trim();
-    const labels = {
-        attr: {A:'成品',B:'半成品',C:'物料'},
-        source: {'1':'自製','2':'客供','3':'外購'},
-        grade: {N:'新品',R:'維修品'}
-    };
-    const materialEl = document.getElementById('material');
-    const materialLabel = materialEl.options[materialEl.selectedIndex].text.split(' - ')[1] || vals[2];
-
-    codes.push({
-        code,
-        attr: labels.attr[vals[0]],
-        source: labels.source[vals[1]],
-        material: materialLabel,
-        materialCode: vals[2],
-        grade: labels.grade[vals[3]],
-        desc,
-        date: new Date().toLocaleDateString('zh-TW')
+async function supaFetch(path, options = {}) {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+        headers: {
+            'apikey': SUPABASE_KEY,
+            'Authorization': `Bearer ${SUPABASE_KEY}`,
+            'Content-Type': 'application/json',
+            'Prefer': options.prefer || 'return=representation',
+            ...options.headers
+        },
+        method: options.method || 'GET',
+        body: options.body ? JSON.stringify(options.body) : undefined
     });
-    saveCodes(codes);
-    showMsg(`編碼 ${code} 新增成功！`, 'success');
-    resetForm();
-    renderTable();
-}
-
-function resetForm() {
-    selectors.forEach(id => document.getElementById(id).value = '');
-    document.getElementById('serial').value = '';
-    document.getElementById('desc').value = '';
-    document.getElementById('preview').textContent = '------';
-    document.getElementById('addBtn').disabled = true;
-    document.getElementById('serial').placeholder = '自動帶入下一個可用號碼';
-}
-
-function deleteCode(code) {
-    if (!confirm(`確定要刪除編碼 ${code} 嗎？`)) return;
-    const codes = loadCodes().filter(c => c.code !== code);
-    saveCodes(codes);
-    renderTable();
-}
-
-function renderTable() {
-    const codes = loadCodes();
-    const query = document.getElementById('searchInput').value.trim().toLowerCase();
-    const filtered = query
-        ? codes.filter(c => c.code.toLowerCase().includes(query) || (c.desc && c.desc.toLowerCase().includes(query)))
-        : codes;
-
-    // Stats
-    document.getElementById('stats').innerHTML = `
-        <div class="stat-item">總編碼數 <strong>${codes.length}</strong></div>
-        <div class="stat-item">成品 <strong>${codes.filter(c=>c.attr==='成品').length}</strong></div>
-        <div class="stat-item">半成品 <strong>${codes.filter(c=>c.attr==='半成品').length}</strong></div>
-        <div class="stat-item">物料 <strong>${codes.filter(c=>c.attr==='物料').length}</strong></div>
-    `;
-
-    if (filtered.length === 0) {
-        document.getElementById('tableWrap').innerHTML = `<div class="empty-state">${query ? '找不到符合的編碼' : '尚未新增任何編碼'}</div>`;
-        return;
+    if (!res.ok) {
+        const err = await res.text();
+        throw new Error(err);
     }
-
-    let html = `<table><thead><tr>
-        <th>編碼</th><th>屬性</th><th>來源</th><th>物料類型</th><th>品別</th><th>描述</th><th>建立日期</th><th></th>
-    </tr></thead><tbody>`;
-    filtered.slice().reverse().forEach(c => {
-        html += `<tr>
-            <td class="code-cell">${c.code}</td>
-            <td>${c.attr}</td><td>${c.source}</td><td>${c.materialCode} ${c.material}</td><td>${c.grade}</td>
-            <td>${c.desc || '-'}</td><td>${c.date}</td>
-            <td><button class="delete-btn" onclick="deleteCode('${c.code}')">刪除</button></td>
-        </tr>`;
-    });
-    html += '</tbody></table>';
-    document.getElementById('tableWrap').innerHTML = html;
+    const text = await res.text();
+    return text ? JSON.parse(text) : [];
 }
 
-function exportCSV() {
-    const codes = loadCodes();
-    if (!codes.length) { showMsg('沒有資料可匯出', 'error'); return; }
-    const header = '編碼,屬性,產品來源,物料類型代碼,物料類型,品別,描述,建立日期\n';
-    const rows = codes.map(c => `${c.code},${c.attr},${c.source},${c.materialCode},${c.material},${c.grade},"${c.desc || ''}",${c.date}`).join('\n');
-    const bom = '\uFEFF';
-    const blob = new Blob([bom + header + rows], {type: 'text/csv;charset=utf-8;'});
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `產品編碼_${new Date().toISOString().slice(0,10)}.csv`;
-    a.click();
+// === 本地快取 ===
+let codesCache = [];
+
+async function loadCodes() {
+    try {
+        codesCache = await supaFetch(`${TABLE}?select=*&order=created_at.asc`);
+        setSyncStatus(true);
+    } catch (e) {
+        console.error('載入失敗:', e);
+        setSyncStatus(false);
+    }
+    return codesCache;
 }
 
-function importCSV() { document.getElementById('csvFile').click(); }
-function handleImport(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = function(ev) {
-        const lines = ev.target.result.split('\n').filter(l => l.trim());
-        const codes = loadCodes();
-        let added = 0, skipped = 0;
-        for (let i = 1; i < lines.length; i++) {
-            const parts = lines[i].split(',');
-            if (parts.length < 6) continue;
-            const code = parts[0].trim();
-            if (!code || code.length < 10) continue;
-            if (codes.some(c => c.code === code)) { skipped++; continue; }
-            codes.push({
-                code,
-                attr: parts[1]?.trim() || '',
-                source: parts[2]?.trim() || '',
-                materialCode: parts[3]?.trim() || '',
-                material: parts[4]?.trim() || '',
-                grade: parts[5]?.trim() || '',
-                desc: (parts[6] || '').replace(/"/g, '').trim(),
-                date: parts[7]?.trim() || new Date().toLocaleDateString('zh-TW')
-            });
-            added++;
-        }
-        saveCodes(codes);
-        renderTable();
-        showMsg(`匯入完成：新增 ${added} 筆，跳過重複 ${skipped} 筆`, 'success');
-    };
-    reader.readAsText(file);
-    e.target.value = '';
+function setSyncStatus(ok) {
+    const el = document.getElementById('syncStatus');
+    if (ok) { el.innerHTML = '<span class="sync-ok">&#9679; 雲端已同步</span>'; }
+    else { el.innerHTML = '<span class="sync-err">&#9679; 連線失敗，請檢查網路</span>'; }
 }
 
 // === 編碼解析 ===
@@ -483,6 +296,155 @@ function parseCode(str) {
     return { code: str, attr: ATTR_LABEL[attr], source: SOURCE_LABEL[source], materialCode: mat, material: MATERIAL_LABEL[mat], grade: GRADE_LABEL[grade], serial };
 }
 
+const selectors = ['attr', 'source', 'material', 'grade'];
+
+function getNextSerial(attr, source, material, grade) {
+    const prefix = attr + source + material + grade;
+    const used = codesCache
+        .filter(c => c.code.startsWith(prefix))
+        .map(c => parseInt(c.code.slice(-4)))
+        .sort((a, b) => a - b);
+    let next = 1;
+    for (const n of used) { if (n === next) next++; else break; }
+    return String(next).padStart(4, '0');
+}
+
+function updatePreview() {
+    const vals = selectors.map(id => document.getElementById(id).value);
+    const serial = document.getElementById('serial').value;
+    const allSelected = vals.every(v => v !== '');
+    if (allSelected) {
+        if (!serial) {
+            const next = getNextSerial(...vals);
+            document.getElementById('serial').placeholder = `下一個：${next}`;
+        }
+        const s = serial || getNextSerial(...vals);
+        document.getElementById('preview').textContent = vals.join('') + s.padStart(4, '0');
+        document.getElementById('addBtn').disabled = false;
+    } else {
+        document.getElementById('preview').textContent = '------';
+        document.getElementById('addBtn').disabled = true;
+    }
+}
+
+selectors.forEach(id => document.getElementById(id).addEventListener('change', updatePreview));
+document.getElementById('serial').addEventListener('input', function() {
+    this.value = this.value.replace(/\D/g, '').slice(0, 4);
+    updatePreview();
+});
+
+function showMsg(text, type, targetId = 'msg') {
+    const el = document.getElementById(targetId);
+    el.textContent = text;
+    el.className = 'msg ' + (type === 'error' ? 'msg-error' : 'msg-success');
+    el.style.display = 'block';
+    setTimeout(() => el.style.display = 'none', 4000);
+}
+
+async function addCode() {
+    const vals = selectors.map(id => document.getElementById(id).value);
+    if (vals.some(v => v === '')) { showMsg('請選擇所有欄位', 'error'); return; }
+
+    let serial = document.getElementById('serial').value;
+    if (!serial) serial = getNextSerial(...vals);
+    serial = serial.padStart(4, '0');
+
+    if (parseInt(serial) < 1 || parseInt(serial) > 9999) {
+        showMsg('流水號必須在 0001 ~ 9999 之間', 'error'); return;
+    }
+
+    const code = vals.join('') + serial;
+    if (codesCache.some(c => c.code === code)) {
+        showMsg(`編碼 ${code} 已經存在，不可重複使用！`, 'error'); return;
+    }
+
+    const materialEl = document.getElementById('material');
+    const materialLabel = materialEl.options[materialEl.selectedIndex].text.split(' - ')[1] || vals[2];
+    const desc = document.getElementById('desc').value.trim();
+
+    try {
+        await supaFetch(TABLE, {
+            method: 'POST',
+            body: { code, attr: ATTR_LABEL[vals[0]], source: SOURCE_LABEL[vals[1]], material_code: vals[2], material: materialLabel, grade: GRADE_LABEL[vals[3]], description: desc }
+        });
+        showMsg(`編碼 ${code} 新增成功！`, 'success');
+        resetForm();
+        await loadCodes();
+        renderTable();
+    } catch (e) {
+        if (e.message.includes('duplicate') || e.message.includes('unique')) {
+            showMsg(`編碼 ${code} 已經存在，不可重複使用！`, 'error');
+        } else {
+            showMsg('新增失敗：' + e.message, 'error');
+        }
+    }
+}
+
+function resetForm() {
+    selectors.forEach(id => document.getElementById(id).value = '');
+    document.getElementById('serial').value = '';
+    document.getElementById('desc').value = '';
+    document.getElementById('preview').textContent = '------';
+    document.getElementById('addBtn').disabled = true;
+    document.getElementById('serial').placeholder = '自動帶入下一個可用號碼';
+}
+
+async function deleteCode(code) {
+    if (!confirm(`確定要刪除編碼 ${code} 嗎？`)) return;
+    try {
+        await supaFetch(`${TABLE}?code=eq.${code}`, { method: 'DELETE', prefer: 'return=minimal' });
+        await loadCodes();
+        renderTable();
+    } catch (e) { showMsg('刪除失敗：' + e.message, 'error'); }
+}
+
+function renderTable() {
+    const codes = codesCache;
+    const query = document.getElementById('searchInput').value.trim().toLowerCase();
+    const filtered = query
+        ? codes.filter(c => c.code.toLowerCase().includes(query) || (c.description && c.description.toLowerCase().includes(query)))
+        : codes;
+
+    document.getElementById('stats').innerHTML = `
+        <div class="stat-item">總編碼數 <strong>${codes.length}</strong></div>
+        <div class="stat-item">成品 <strong>${codes.filter(c=>c.attr==='成品').length}</strong></div>
+        <div class="stat-item">半成品 <strong>${codes.filter(c=>c.attr==='半成品').length}</strong></div>
+        <div class="stat-item">物料 <strong>${codes.filter(c=>c.attr==='物料').length}</strong></div>
+    `;
+
+    if (filtered.length === 0) {
+        document.getElementById('tableWrap').innerHTML = `<div class="empty-state">${query ? '找不到符合的編碼' : '尚未新增任何編碼'}</div>`;
+        return;
+    }
+
+    let html = `<table><thead><tr>
+        <th>編碼</th><th>屬性</th><th>來源</th><th>物料類型</th><th>品別</th><th>描述</th><th>建立日期</th><th></th>
+    </tr></thead><tbody>`;
+    filtered.slice().reverse().forEach(c => {
+        const date = c.created_at ? new Date(c.created_at).toLocaleDateString('zh-TW') : '-';
+        html += `<tr>
+            <td class="code-cell">${c.code}</td>
+            <td>${c.attr || ''}</td><td>${c.source || ''}</td><td>${c.material_code || ''} ${c.material || ''}</td><td>${c.grade || ''}</td>
+            <td>${c.description || '-'}</td><td>${date}</td>
+            <td><button class="delete-btn" onclick="deleteCode('${c.code}')">刪除</button></td>
+        </tr>`;
+    });
+    html += '</tbody></table>';
+    document.getElementById('tableWrap').innerHTML = html;
+}
+
+function exportCSV() {
+    if (!codesCache.length) { showMsg('沒有資料可匯出', 'error'); return; }
+    const header = '編碼,屬性,產品來源,物料類型代碼,物料類型,品別,描述,建立日期\n';
+    const rows = codesCache.map(c => {
+        const date = c.created_at ? new Date(c.created_at).toLocaleDateString('zh-TW') : '';
+        return `${c.code},${c.attr},${c.source},${c.material_code},${c.material},${c.grade},"${c.description || ''}",${date}`;
+    }).join('\n');
+    const blob = new Blob(['\uFEFF' + header + rows], {type: 'text/csv;charset=utf-8;'});
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = `產品編碼_${new Date().toISOString().slice(0,10)}.csv`; a.click();
+}
+
 // === Tab 切換 ===
 function switchImportTab(tab, btn) {
     document.getElementById('importPasteTab').style.display = tab === 'paste' ? '' : 'none';
@@ -496,24 +458,20 @@ let bulkParsed = [];
 
 function previewBulk() {
     const raw = document.getElementById('bulkInput').value.trim();
-    if (!raw) { showBulkMsg('請先貼上編碼資料', 'error'); return; }
+    if (!raw) { showMsg('請先貼上編碼資料', 'error', 'bulkMsg'); return; }
     const lines = raw.split('\n').filter(l => l.trim());
-    const codes = loadCodes();
     bulkParsed = [];
-
     lines.forEach(line => {
         const parts = line.split(/[,\t]+/).map(s => s.trim());
-        const codeStr = parts[0];
+        const parsed = parseCode(parts[0]);
         const desc = parts.slice(1).join(', ');
-        const parsed = parseCode(codeStr);
         if (parsed) {
-            const dup = codes.some(c => c.code === parsed.code) || bulkParsed.some(p => p.status !== 'invalid' && p.code === parsed.code);
+            const dup = codesCache.some(c => c.code === parsed.code) || bulkParsed.some(p => p.status === 'valid' && p.code === parsed.code);
             bulkParsed.push({ ...parsed, desc, status: dup ? 'duplicate' : 'valid' });
         } else {
-            bulkParsed.push({ code: codeStr, desc, status: 'invalid', reason: '格式不符' });
+            bulkParsed.push({ code: parts[0], desc, status: 'invalid', reason: '格式不符' });
         }
     });
-
     renderBulkPreview();
 }
 
@@ -521,41 +479,37 @@ function renderBulkPreview() {
     const valid = bulkParsed.filter(p => p.status === 'valid').length;
     const dup = bulkParsed.filter(p => p.status === 'duplicate').length;
     const invalid = bulkParsed.filter(p => p.status === 'invalid').length;
-
     let html = `<p style="font-size:0.85rem;margin-bottom:10px;">判讀結果：<span class="valid">可匯入 ${valid} 筆</span>`;
     if (dup) html += `、<span class="duplicate">重複 ${dup} 筆</span>`;
     if (invalid) html += `、<span class="invalid">無法辨識 ${invalid} 筆</span>`;
-    html += `</p>`;
-
-    html += `<table><thead><tr><th>狀態</th><th>編碼</th><th>屬性</th><th>來源</th><th>物料類型</th><th>品別</th><th>描述</th></tr></thead><tbody>`;
+    html += `</p><table><thead><tr><th>狀態</th><th>編碼</th><th>屬性</th><th>來源</th><th>物料類型</th><th>品別</th><th>描述</th></tr></thead><tbody>`;
     bulkParsed.forEach(p => {
         const cls = p.status === 'valid' ? 'valid' : p.status === 'duplicate' ? 'duplicate' : 'invalid';
         const statusText = p.status === 'valid' ? '可匯入' : p.status === 'duplicate' ? '已存在' : '無法辨識';
         html += `<tr><td class="${cls}">${statusText}</td><td class="code-cell">${p.code || '-'}</td>`;
-        if (p.status !== 'invalid') {
-            html += `<td>${p.attr}</td><td>${p.source}</td><td>${p.materialCode} ${p.material}</td><td>${p.grade}</td>`;
-        } else {
-            html += `<td colspan="4" style="color:#c62828;">${p.reason}</td>`;
-        }
+        if (p.status !== 'invalid') html += `<td>${p.attr}</td><td>${p.source}</td><td>${p.materialCode} ${p.material}</td><td>${p.grade}</td>`;
+        else html += `<td colspan="4" style="color:#c62828;">${p.reason}</td>`;
         html += `<td>${p.desc || '-'}</td></tr>`;
     });
     html += '</tbody></table>';
     document.getElementById('bulkPreview').innerHTML = html;
-
     document.getElementById('bulkAddBtn').style.display = valid > 0 ? '' : 'none';
     document.getElementById('bulkClearBtn').style.display = '';
 }
 
-function confirmBulk() {
-    const codes = loadCodes();
+async function confirmBulk() {
     const toAdd = bulkParsed.filter(p => p.status === 'valid');
-    toAdd.forEach(p => {
-        codes.push({ code: p.code, attr: p.attr, source: p.source, material: p.material, materialCode: p.materialCode, grade: p.grade, desc: p.desc || '', date: new Date().toLocaleDateString('zh-TW') });
-    });
-    saveCodes(codes);
-    showBulkMsg(`成功匯入 ${toAdd.length} 筆編碼！`, 'success');
-    clearBulk();
-    renderTable();
+    try {
+        await supaFetch(TABLE, {
+            method: 'POST',
+            headers: { 'Prefer': 'resolution=ignore-duplicates,return=representation' },
+            body: toAdd.map(p => ({ code: p.code, attr: p.attr, source: p.source, material_code: p.materialCode, material: p.material, grade: p.grade, description: p.desc || '' }))
+        });
+        showMsg(`成功匯入 ${toAdd.length} 筆編碼！`, 'success', 'bulkMsg');
+        clearBulk();
+        await loadCodes();
+        renderTable();
+    } catch (e) { showMsg('匯入失敗：' + e.message, 'error', 'bulkMsg'); }
 }
 
 function clearBulk() {
@@ -566,34 +520,18 @@ function clearBulk() {
     bulkParsed = [];
 }
 
-function showBulkMsg(text, type) {
-    const el = document.getElementById('bulkMsg');
-    el.textContent = text;
-    el.className = 'msg ' + (type === 'error' ? 'msg-error' : 'msg-success');
-    el.style.display = 'block';
-    setTimeout(() => el.style.display = 'none', 4000);
-}
-
-// === 檔案匯入 (Excel / CSV) ===
+// === 檔案匯入 ===
 let fileParsed = [];
 
-function handleFileDrop(e) {
-    const file = e.dataTransfer.files[0];
-    if (file) processFile(file);
-}
-function handleFileSelect(e) {
-    const file = e.target.files[0];
-    if (file) processFile(file);
-    e.target.value = '';
-}
+function handleFileDrop(e) { if (e.dataTransfer.files[0]) processFile(e.dataTransfer.files[0]); }
+function handleFileSelect(e) { if (e.target.files[0]) processFile(e.target.files[0]); e.target.value = ''; }
 
 function processFile(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
         let allCodes = [];
         if (file.name.endsWith('.csv')) {
-            const text = e.target.result;
-            const lines = text.split('\n').filter(l => l.trim());
+            const lines = e.target.result.split('\n').filter(l => l.trim());
             lines.forEach(line => {
                 const parts = line.split(/[,\t]+/).map(s => s.trim().replace(/^"|"$/g, ''));
                 parts.forEach((p, idx) => {
@@ -608,10 +546,8 @@ function processFile(file) {
             const data = new Uint8Array(e.target.result);
             const wb = XLSX.read(data, { type: 'array' });
             wb.SheetNames.forEach(name => {
-                const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: '' });
-                rows.forEach(row => {
-                    let rowDesc = '';
-                    let rowCodes = [];
+                XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: '' }).forEach(row => {
+                    let rowDesc = '', rowCodes = [];
                     row.forEach(cell => {
                         const s = String(cell).trim();
                         const parsed = parseCode(s);
@@ -622,33 +558,22 @@ function processFile(file) {
                 });
             });
         }
-
-        const codes = loadCodes();
         fileParsed = [];
         const seen = new Set();
         allCodes.forEach(c => {
             if (seen.has(c.code)) return;
             seen.add(c.code);
-            const dup = codes.some(ex => ex.code === c.code);
-            fileParsed.push({ ...c, status: dup ? 'duplicate' : 'valid' });
+            fileParsed.push({ ...c, status: codesCache.some(ex => ex.code === c.code) ? 'duplicate' : 'valid' });
         });
-
-        if (fileParsed.length === 0) {
-            showFileMsg('檔案中找不到符合編碼格式的資料', 'error');
-            return;
-        }
-
+        if (!fileParsed.length) { showMsg('檔案中找不到符合編碼格式的資料', 'error', 'fileMsg'); return; }
         const valid = fileParsed.filter(p => p.status === 'valid').length;
         const dup = fileParsed.filter(p => p.status === 'duplicate').length;
-
         let html = `<p style="font-size:0.85rem;margin:14px 0 10px;">從 <strong>${file.name}</strong> 偵測到 ${fileParsed.length} 筆編碼：<span class="valid">可匯入 ${valid} 筆</span>`;
         if (dup) html += `、<span class="duplicate">重複 ${dup} 筆</span>`;
-        html += `</p>`;
-        html += `<table><thead><tr><th>狀態</th><th>編碼</th><th>屬性</th><th>來源</th><th>物料類型</th><th>品別</th><th>描述</th></tr></thead><tbody>`;
+        html += `</p><table><thead><tr><th>狀態</th><th>編碼</th><th>屬性</th><th>來源</th><th>物料類型</th><th>品別</th><th>描述</th></tr></thead><tbody>`;
         fileParsed.forEach(p => {
             const cls = p.status === 'valid' ? 'valid' : 'duplicate';
-            const statusText = p.status === 'valid' ? '可匯入' : '已存在';
-            html += `<tr><td class="${cls}">${statusText}</td><td class="code-cell">${p.code}</td><td>${p.attr}</td><td>${p.source}</td><td>${p.materialCode} ${p.material}</td><td>${p.grade}</td><td>${p.desc || '-'}</td></tr>`;
+            html += `<tr><td class="${cls}">${p.status === 'valid' ? '可匯入' : '已存在'}</td><td class="code-cell">${p.code}</td><td>${p.attr}</td><td>${p.source}</td><td>${p.materialCode} ${p.material}</td><td>${p.grade}</td><td>${p.desc || '-'}</td></tr>`;
         });
         html += '</tbody></table>';
         document.getElementById('filePreview').innerHTML = html;
@@ -658,29 +583,29 @@ function processFile(file) {
     else reader.readAsArrayBuffer(file);
 }
 
-function confirmFileBulk() {
-    const codes = loadCodes();
+async function confirmFileBulk() {
     const toAdd = fileParsed.filter(p => p.status === 'valid');
-    toAdd.forEach(p => {
-        codes.push({ code: p.code, attr: p.attr, source: p.source, material: p.material, materialCode: p.materialCode, grade: p.grade, desc: p.desc || '', date: new Date().toLocaleDateString('zh-TW') });
-    });
-    saveCodes(codes);
-    showFileMsg(`成功匯入 ${toAdd.length} 筆編碼！`, 'success');
-    document.getElementById('filePreview').innerHTML = '';
-    document.getElementById('fileAddBtn').style.display = 'none';
-    fileParsed = [];
+    try {
+        await supaFetch(TABLE, {
+            method: 'POST',
+            headers: { 'Prefer': 'resolution=ignore-duplicates,return=representation' },
+            body: toAdd.map(p => ({ code: p.code, attr: p.attr, source: p.source, material_code: p.materialCode, material: p.material, grade: p.grade, description: p.desc || '' }))
+        });
+        showMsg(`成功匯入 ${toAdd.length} 筆編碼！`, 'success', 'fileMsg');
+        document.getElementById('filePreview').innerHTML = '';
+        document.getElementById('fileAddBtn').style.display = 'none';
+        fileParsed = [];
+        await loadCodes();
+        renderTable();
+    } catch (e) { showMsg('匯入失敗：' + e.message, 'error', 'fileMsg'); }
+}
+
+// === 初始化 ===
+(async function init() {
+    await loadCodes();
     renderTable();
-}
-
-function showFileMsg(text, type) {
-    const el = document.getElementById('fileMsg');
-    el.textContent = text;
-    el.className = 'msg ' + (type === 'error' ? 'msg-error' : 'msg-success');
-    el.style.display = 'block';
-    setTimeout(() => el.style.display = 'none', 4000);
-}
-
-renderTable();
+    document.getElementById('loadingOverlay').style.display = 'none';
+})();
 </script>
 </body>
 </html>
