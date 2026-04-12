@@ -3,6 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#1a73e8">
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icon-192.png">
     <title>產品編碼系統</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -881,6 +886,11 @@ function exportBomCSV() {
     const blob = new Blob(['\uFEFF' + header + rows], {type: 'text/csv;charset=utf-8;'});
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
     a.download = `BOM編碼結果_${new Date().toISOString().slice(0,10)}.csv`; a.click();
+}
+
+// === Service Worker 註冊 ===
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
 
 // === 初始化 ===
