@@ -64,6 +64,19 @@
         .delete-btn:hover { text-decoration: underline; }
         .empty-state { text-align: center; color: #999; padding: 30px; }
 
+        .group-header {
+            background: #e8f0fe; padding: 12px 16px; border-radius: 8px; margin-top: 10px;
+            cursor: pointer; display: flex; justify-content: space-between; align-items: center;
+            user-select: none; transition: background 0.2s;
+        }
+        .group-header:hover { background: #d2e3fc; }
+        .group-header .group-title { font-weight: 600; color: #1a73e8; font-size: 0.95rem; }
+        .group-header .group-count { font-size: 0.8rem; color: #666; }
+        .group-header .arrow { transition: transform 0.2s; font-size: 0.8rem; color: #888; }
+        .group-header.open .arrow { transform: rotate(90deg); }
+        .group-body { display: none; }
+        .group-body.open { display: block; }
+
         .search-bar { display: flex; gap: 10px; margin-bottom: 16px; }
         .search-bar input { flex: 1; padding: 10px 14px; border: 1.5px solid #ddd; border-radius: 8px; font-size: 0.95rem; }
         .search-bar input:focus { border-color: #1a73e8; outline: none; }
@@ -492,6 +505,14 @@ async function deleteCode(code) {
     } catch (e) { showMsg('刪除失敗：' + e.message, 'error'); }
 }
 
+const openGroups = new Set();
+
+function toggleGroup(key) {
+    if (openGroups.has(key)) openGroups.delete(key);
+    else openGroups.add(key);
+    renderTable();
+}
+
 function renderTable() {
     const codes = codesCache;
     const query = document.getElementById('searchInput').value.trim().toLowerCase();
@@ -511,19 +532,42 @@ function renderTable() {
         return;
     }
 
-    let html = `<table><thead><tr>
-        <th>編碼</th><th>屬性</th><th>來源</th><th>物料類型</th><th>品別</th><th>描述</th><th>建立日期</th><th></th>
-    </tr></thead><tbody>`;
-    filtered.slice().reverse().forEach(c => {
-        const date = c.created_at ? new Date(c.created_at).toLocaleDateString('zh-TW') : '-';
-        html += `<tr>
-            <td class="code-cell">${c.code}</td>
-            <td>${c.attr || ''}</td><td>${c.source || ''}</td><td>${c.material_code || ''} ${c.material || ''}</td><td>${c.grade || ''}</td>
-            <td>${c.description || '-'}</td><td>${date}</td>
-            <td><button class="delete-btn" onclick="deleteCode('${c.code}')">刪除</button></td>
-        </tr>`;
+    // 依物料類型分組
+    const groups = {};
+    filtered.forEach(c => {
+        const key = (c.material_code || '其他') + ' ' + (c.material || '未分類');
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(c);
     });
-    html += '</tbody></table>';
+
+    // 如果有搜尋，自動展開所有分類
+    if (query) { Object.keys(groups).forEach(k => openGroups.add(k)); }
+
+    let html = '';
+    Object.keys(groups).sort().forEach(key => {
+        const items = groups[key];
+        const isOpen = openGroups.has(key);
+
+        html += `<div class="group-header ${isOpen ? 'open' : ''}" onclick="toggleGroup('${key.replace(/'/g, "\\'")}')">
+            <span class="group-title"><span class="arrow">&#9654;</span>&nbsp; ${key}</span>
+            <span class="group-count">${items.length} 筆</span>
+        </div>`;
+        html += `<div class="group-body ${isOpen ? 'open' : ''}">`;
+        html += `<table><thead><tr>
+            <th>編碼</th><th>屬性</th><th>來源</th><th>品別</th><th>描述</th><th>建立日期</th><th></th>
+        </tr></thead><tbody>`;
+        items.slice().reverse().forEach(c => {
+            const date = c.created_at ? new Date(c.created_at).toLocaleDateString('zh-TW') : '-';
+            html += `<tr>
+                <td class="code-cell">${c.code}</td>
+                <td>${c.attr || ''}</td><td>${c.source || ''}</td><td>${c.grade || ''}</td>
+                <td>${c.description || '-'}</td><td>${date}</td>
+                <td><button class="delete-btn" onclick="deleteCode('${c.code}')">刪除</button></td>
+            </tr>`;
+        });
+        html += '</tbody></table></div>';
+    });
+
     document.getElementById('tableWrap').innerHTML = html;
 }
 
