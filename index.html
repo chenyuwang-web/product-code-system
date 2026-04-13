@@ -532,40 +532,65 @@ function renderTable() {
         return;
     }
 
-    // 依物料類型分組
+    // 依屬性階層式分組：成品 → 半成品 → 物料
+    const levels = ['成品', '半成品', '物料'];
     const groups = {};
     filtered.forEach(c => {
-        const key = (c.material_code || '其他') + ' ' + (c.material || '未分類');
+        const key = c.attr || '未分類';
         if (!groups[key]) groups[key] = [];
         groups[key].push(c);
     });
 
-    // 如果有搜尋，自動展開所有分類
-    if (query) { Object.keys(groups).forEach(k => openGroups.add(k)); }
+    // 如果有搜尋，自動展開所有層級
+    if (query) { levels.forEach(k => openGroups.add(k)); }
 
     let html = '';
-    Object.keys(groups).sort().forEach(key => {
-        const items = groups[key];
-        const isOpen = openGroups.has(key);
 
-        html += `<div class="group-header ${isOpen ? 'open' : ''}" onclick="toggleGroup('${key.replace(/'/g, "\\'")}')">
-            <span class="group-title"><span class="arrow">&#9654;</span>&nbsp; ${key}</span>
-            <span class="group-count">${items.length} 筆</span>
-        </div>`;
-        html += `<div class="group-body ${isOpen ? 'open' : ''}">`;
-        html += `<table><thead><tr>
-            <th>編碼</th><th>屬性</th><th>來源</th><th>品別</th><th>描述</th><th>建立日期</th><th></th>
+    function renderItems(items) {
+        let h = `<table><thead><tr>
+            <th>編碼</th><th>來源</th><th>物料類型</th><th>品別</th><th>描述</th><th>建立日期</th><th></th>
         </tr></thead><tbody>`;
         items.slice().reverse().forEach(c => {
             const date = c.created_at ? new Date(c.created_at).toLocaleDateString('zh-TW') : '-';
-            html += `<tr>
+            h += `<tr>
                 <td class="code-cell">${c.code}</td>
-                <td>${c.attr || ''}</td><td>${c.source || ''}</td><td>${c.grade || ''}</td>
+                <td>${c.source || ''}</td><td>${c.material_code || ''} ${c.material || ''}</td><td>${c.grade || ''}</td>
                 <td>${c.description || '-'}</td><td>${date}</td>
                 <td><button class="delete-btn" onclick="deleteCode('${c.code}')">刪除</button></td>
             </tr>`;
         });
-        html += '</tbody></table></div>';
+        return h + '</tbody></table>';
+    }
+
+    // 由最內層往外包：物料 → 半成品 → 成品
+    for (let i = levels.length - 1; i >= 0; i--) {
+        const key = levels[i];
+        const items = groups[key] || [];
+        if (items.length === 0 && !html) continue;
+
+        const isOpen = openGroups.has(key);
+        const indent = i * 20;
+        let block = `<div style="margin-left:${indent}px;">`;
+        block += `<div class="group-header ${isOpen ? 'open' : ''}" onclick="toggleGroup('${key}')">
+            <span class="group-title"><span class="arrow">&#9654;</span>&nbsp; ${key}</span>
+            <span class="group-count">${items.length} 筆</span>
+        </div>`;
+        block += `<div class="group-body ${isOpen ? 'open' : ''}" style="margin-left:8px;">`;
+        if (items.length > 0) block += renderItems(items);
+        block += html;
+        block += '</div></div>';
+        html = block;
+    }
+
+    // 處理未分類
+    if (groups['未分類']) {
+        const isOpen = openGroups.has('未分類');
+        html += `<div class="group-header ${isOpen ? 'open' : ''}" onclick="toggleGroup('未分類')">
+            <span class="group-title"><span class="arrow">&#9654;</span>&nbsp; 未分類</span>
+            <span class="group-count">${groups['未分類'].length} 筆</span>
+        </div>`;
+        html += `<div class="group-body ${isOpen ? 'open' : ''}">${renderItems(groups['未分類'])}</div>`;
+    }
     });
 
     document.getElementById('tableWrap').innerHTML = html;
