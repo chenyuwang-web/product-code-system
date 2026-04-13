@@ -217,6 +217,7 @@
             <div id="filePreview" class="import-preview"></div>
             <div class="btn-row" style="justify-content:flex-start;">
                 <button class="btn btn-primary" id="fileAddBtn" onclick="confirmFileBulk()" style="display:none;">確認匯入</button>
+                <button class="btn btn-secondary" onclick="clearFileImport()">清除</button>
             </div>
         </div>
     </div>
@@ -676,59 +677,86 @@ function handleFileSelect(e) { if (e.target.files[0]) processFile(e.target.files
 function processFile(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
-        let allCodes = [];
+        let allRows = []; // 每行的所有欄位
         if (file.name.endsWith('.csv')) {
             const lines = e.target.result.split('\n').filter(l => l.trim());
             lines.forEach(line => {
-                const parts = line.split(/[,\t]+/).map(s => s.trim().replace(/^"|"$/g, ''));
-                parts.forEach((p, idx) => {
-                    const parsed = parseCode(p);
-                    if (parsed) {
-                        const desc = parts.filter((_, i) => i !== idx && !/^[A-C][123][A-Z]{3}[NR]\d{4}$/i.test(_)).join(', ');
-                        allCodes.push({ ...parsed, desc });
-                    }
-                });
+                allRows.push(line.split(/[,\t]+/).map(s => s.trim().replace(/^"|"$/g, '')));
             });
         } else {
             const data = new Uint8Array(e.target.result);
             const wb = XLSX.read(data, { type: 'array' });
             wb.SheetNames.forEach(name => {
                 XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: '' }).forEach(row => {
-                    let rowDesc = '', rowCodes = [];
-                    row.forEach(cell => {
-                        const s = String(cell).trim();
-                        const parsed = parseCode(s);
-                        if (parsed) rowCodes.push(parsed);
-                        else if (s && !/^\d+$/.test(s)) rowDesc += (rowDesc ? ', ' : '') + s;
-                    });
-                    rowCodes.forEach(c => allCodes.push({ ...c, desc: rowDesc }));
+                    allRows.push(row.map(cell => String(cell).trim()));
                 });
             });
         }
+
+        // 偵測標題列
+        const headerKeywords = ['料號', '編碼', '品名', '規格', '單位', '數量', '層次'];
+        const startIdx = allRows.length > 0 && headerKeywords.some(kw => allRows[0].join('').includes(kw)) ? 1 : 0;
+
         fileParsed = [];
-        const seen = new Set();
-        allCodes.forEach(c => {
-            if (seen.has(c.code)) return;
-            seen.add(c.code);
-            const existingItem = codesCache.find(ex => ex.code === c.code);
-            if (existingItem) {
-                fileParsed.push({ ...c, status: 'duplicate', dupCode: existingItem.code, dupDesc: existingItem.description || '' });
-            } else {
-                fileParsed.push({ ...c, status: 'valid' });
+        for (let i = startIdx; i < allRows.length; i++) {
+            const parts = allRows[i];
+            if (parts.filter(p => p).length === 0) continue;
+
+            // 掃描所有欄位找合法編碼
+            let parsed = null;
+            let codeIdx = -1;
+            for (let j = 0; j < parts.length; j++) {
+                parsed = parseCode(parts[j]);
+                if (parsed) { codeIdx = j; break; }
             }
-        });
-        if (!fileParsed.length) { showMsg('檔案中找不到符合編碼格式的資料', 'error', 'fileMsg'); return; }
+
+            // 描述：非編碼、非純數字的欄位
+            const desc = parts.filter((p, idx) => idx !== codeIdx && p && !/^\d+(\.\d+)?$/.test(p) && !parseCode(p)).join(', ');
+
+            if (parsed) {
+                const existingItem = codesCache.find(c => c.code === parsed.code);
+                const dupInFile = fileParsed.find(p => (p.status === 'valid' || p.status === 'duplicate-batch') && p.code === parsed.code);
+                if (existingItem) {
+                    fileParsed.push({ ...parsed, desc, status: 'duplicate', dupCode: existingItem.code, dupDesc: existingItem.description || '' });
+                } else if (dupInFile) {
+                    fileParsed.push({ ...parsed, desc, status: 'duplicate-batch', dupCode: dupInFile.code, dupDesc: dupInFile.desc || '' });
+                } else {
+                    fileParsed.push({ ...parsed, desc, status: 'valid' });
+                }
+            } else {
+                const rawCode = parts.find(p => p.length >= 6 && /[A-Za-z]/.test(p)) || parts.find(p => p) || '-';
+                fileParsed.push({ code: rawCode, desc, status: 'invalid', reason: '找不到合法編碼' });
+            }
+        }
+
+        if (!fileParsed.length) { showMsg('檔案中沒有找到資料', 'error', 'fileMsg'); return; }
+
+        const total = fileParsed.length;
         const valid = fileParsed.filter(p => p.status === 'valid').length;
         const dup = fileParsed.filter(p => p.status === 'duplicate').length;
-        let html = `<p style="font-size:0.85rem;margin:14px 0 10px;">從 <strong>${file.name}</strong> 偵測到 ${fileParsed.length} 筆編碼：<span class="valid">可匯入 ${valid} 筆</span>`;
-        if (dup) html += `、<span class="duplicate">重複 ${dup} 筆</span>`;
+        const dupBatch = fileParsed.filter(p => p.status === 'duplicate-batch').length;
+        const invalid = fileParsed.filter(p => p.status === 'invalid').length;
+
+        let html = `<p style="font-size:0.85rem;margin:14px 0 10px;">從 <strong>${file.name}</strong> 讀取到 <strong>${total}</strong> 筆資料：<span class="valid">可匯入 ${valid} 筆</span>`;
+        if (dup) html += `、<span class="duplicate">與資料庫重複 ${dup} 筆</span>`;
+        if (dupBatch) html += `、<span class="duplicate">檔案內重複 ${dupBatch} 筆</span>`;
+        if (invalid) html += `、<span class="invalid">無法辨識 ${invalid} 筆</span>`;
         html += `</p><table><thead><tr><th>狀態</th><th>編碼</th><th>屬性</th><th>來源</th><th>物料類型</th><th>品別</th><th>描述</th><th>衝突品項</th></tr></thead><tbody>`;
         fileParsed.forEach(p => {
-            const cls = p.status === 'valid' ? 'valid' : 'duplicate';
-            const fileStatusText = p.status === 'valid' ? '可匯入' : '重複';
-            html += `<tr><td class="${cls}">${fileStatusText}</td><td class="code-cell">${p.code}</td><td>${p.attr}</td><td>${p.source}</td><td>${p.materialCode} ${p.material}</td><td>${p.grade}</td><td>${p.desc || '-'}</td>`;
+            const cls = p.status === 'valid' ? 'valid' : p.status === 'invalid' ? 'invalid' : 'duplicate';
+            let statusText = '可匯入';
+            if (p.status === 'duplicate') statusText = '重複';
+            else if (p.status === 'duplicate-batch') statusText = '檔案內重複';
+            else if (p.status === 'invalid') statusText = '無法辨識';
+
+            html += `<tr><td class="${cls}">${statusText}</td><td class="code-cell">${p.code || '-'}</td>`;
+            if (p.status !== 'invalid') html += `<td>${p.attr}</td><td>${p.source}</td><td>${p.materialCode} ${p.material}</td><td>${p.grade}</td>`;
+            else html += `<td colspan="4" style="color:#c62828;">${p.reason}</td>`;
+            html += `<td>${p.desc || '-'}</td>`;
             if (p.status === 'duplicate') {
                 html += `<td style="font-size:0.8rem;color:#e65100;">資料庫既有<br>編碼：<strong>${p.dupCode}</strong>${p.dupDesc ? '<br>描述：' + p.dupDesc : ''}</td>`;
+            } else if (p.status === 'duplicate-batch') {
+                html += `<td style="font-size:0.8rem;color:#e65100;">檔案內重複<br>編碼：<strong>${p.dupCode}</strong>${p.dupDesc ? '<br>描述：' + p.dupDesc : ''}</td>`;
             } else {
                 html += `<td>-</td>`;
             }
@@ -740,6 +768,13 @@ function processFile(file) {
     };
     if (file.name.endsWith('.csv')) reader.readAsText(file);
     else reader.readAsArrayBuffer(file);
+}
+
+function clearFileImport() {
+    fileParsed = [];
+    document.getElementById('filePreview').innerHTML = '';
+    document.getElementById('fileAddBtn').style.display = 'none';
+    document.getElementById('fileMsg').style.display = 'none';
 }
 
 async function confirmFileBulk() {
