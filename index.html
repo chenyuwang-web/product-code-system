@@ -562,10 +562,12 @@ function previewBulk() {
             const existingItem = codesCache.find(c => c.code === parsed.code);
             const dupInBatch = bulkParsed.find(p => p.status === 'valid' && p.code === parsed.code);
             if (existingItem) {
-                const dupInfo = existingItem.description ? `資料庫既有品項「${existingItem.description}」` : `資料庫既有品項（編碼：${existingItem.code}）`;
+                const descPart = existingItem.description ? `，描述：${existingItem.description}` : '';
+                const dupInfo = `料號：${existingItem.code}${descPart}`;
                 bulkParsed.push({ ...parsed, desc, status: 'duplicate', dupSource: 'db', dupInfo });
             } else if (dupInBatch) {
-                const dupInfo = dupInBatch.desc ? `本次匯入品項「${dupInBatch.desc}」` : `本次匯入品項（編碼：${dupInBatch.code}）`;
+                const descPart = dupInBatch.desc ? `，描述：${dupInBatch.desc}` : '';
+                const dupInfo = `本次匯入重複（料號：${dupInBatch.code}${descPart}）`;
                 bulkParsed.push({ ...parsed, desc, status: 'duplicate', dupSource: 'batch', dupInfo });
             } else {
                 bulkParsed.push({ ...parsed, desc, status: 'valid' });
@@ -668,7 +670,8 @@ function processFile(file) {
             seen.add(c.code);
             const existingItem = codesCache.find(ex => ex.code === c.code);
             if (existingItem) {
-                const dupInfo = existingItem.description ? `資料庫既有品項「${existingItem.description}」` : `資料庫既有品項（編碼：${existingItem.code}）`;
+                const descPart = existingItem.description ? `，描述：${existingItem.description}` : '';
+                const dupInfo = `料號：${existingItem.code}${descPart}`;
                 fileParsed.push({ ...c, status: 'duplicate', dupInfo });
             } else {
                 fileParsed.push({ ...c, status: 'valid' });
