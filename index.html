@@ -338,22 +338,45 @@
 </div>
 
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script>
 // === Supabase 設定 ===
 const SUPABASE_URL = 'https://plsmpjrshznlmiooqlpq.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_s5UF9Ea96F1KK7B8BAa2Kw_8bMdAG8B';
 const TABLE = 'product_codes';
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const DB = {
+    async select() {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?select=*&order=created_at.asc`, {
+            headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+        });
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+    },
+    async insert(rows) {
+        const body = Array.isArray(rows) ? rows : [rows];
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}`, {
+            method: 'POST',
+            headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=ignore-duplicates,return=representation' },
+            body: JSON.stringify(body)
+        });
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+    },
+    async remove(code) {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?code=eq.${encodeURIComponent(code)}`, {
+            method: 'DELETE',
+            headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+        });
+        if (!res.ok) throw new Error(await res.text());
+    }
+};
 
 // === 本地快取 ===
 let codesCache = [];
 
 async function loadCodes() {
     try {
-        const { data, error } = await supabase.from(TABLE).select('*').order('created_at', { ascending: true });
-        if (error) throw error;
-        codesCache = data || [];
+        codesCache = await DB.select();
         setSyncStatus(true);
     } catch (e) {
         console.error('載入失敗:', e);
@@ -454,8 +477,7 @@ async function addCode() {
     const desc = document.getElementById('desc').value.trim();
 
     try {
-        const { error } = await supabase.from(TABLE).insert({ code, attr: ATTR_LABEL[vals[0]], source: SOURCE_LABEL[vals[1]], material_code: vals[2], material: materialLabel, grade: GRADE_LABEL[vals[3]], description: desc });
-        if (error) throw error;
+        await DB.insert({ code, attr: ATTR_LABEL[vals[0]], source: SOURCE_LABEL[vals[1]], material_code: vals[2], material: materialLabel, grade: GRADE_LABEL[vals[3]], description: desc });
         showMsg(`編碼 ${code} 新增成功！`, 'success');
         resetForm();
         await loadCodes();
@@ -481,8 +503,7 @@ function resetForm() {
 async function deleteCode(code) {
     if (!confirm(`確定要刪除編碼 ${code} 嗎？`)) return;
     try {
-        const { error } = await supabase.from(TABLE).delete().eq('code', code);
-        if (error) throw error;
+        await DB.remove(code);
         await loadCodes();
         renderTable();
     } catch (e) { showMsg('刪除失敗：' + (e.message || e), 'error'); }
@@ -716,11 +737,7 @@ function removeBulkInvalid() {
 async function confirmBulk() {
     const toAdd = bulkParsed.filter(p => p.status === 'valid');
     try {
-        const { error } = await supabase.from(TABLE).upsert(
-            toAdd.map(p => ({ code: p.code, attr: p.attr, source: p.source, material_code: p.materialCode, material: p.material, grade: p.grade, description: p.desc || '' })),
-            { onConflict: 'code', ignoreDuplicates: true }
-        );
-        if (error) throw error;
+        await DB.insert(toAdd.map(p => ({ code: p.code, attr: p.attr, source: p.source, material_code: p.materialCode, material: p.material, grade: p.grade, description: p.desc || '' })));
         showMsg(`成功匯入 ${toAdd.length} 筆編碼！`, 'success', 'bulkMsg');
         clearBulk();
         await loadCodes();
@@ -870,11 +887,7 @@ function clearFileImport() {
 async function confirmFileBulk() {
     const toAdd = fileParsed.filter(p => p.status === 'valid');
     try {
-        const { error } = await supabase.from(TABLE).upsert(
-            toAdd.map(p => ({ code: p.code, attr: p.attr, source: p.source, material_code: p.materialCode, material: p.material, grade: p.grade, description: p.desc || '' })),
-            { onConflict: 'code', ignoreDuplicates: true }
-        );
-        if (error) throw error;
+        await DB.insert(toAdd.map(p => ({ code: p.code, attr: p.attr, source: p.source, material_code: p.materialCode, material: p.material, grade: p.grade, description: p.desc || '' })));
         showMsg(`成功匯入 ${toAdd.length} 筆編碼！`, 'success', 'fileMsg');
         document.getElementById('filePreview').innerHTML = '';
         document.getElementById('fileAddBtn').style.display = 'none';
@@ -1041,8 +1054,7 @@ async function confirmBom() {
     });
 
     try {
-        const { error } = await supabase.from(TABLE).upsert(records, { onConflict: 'code', ignoreDuplicates: true });
-        if (error) throw error;
+        await DB.insert(records);
         showMsg(`成功編碼並匯入 ${records.length} 筆！`, 'success', 'bomMsg');
         await loadCodes();
         renderTable();
