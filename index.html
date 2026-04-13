@@ -199,7 +199,7 @@
             <div class="btn-row" style="justify-content:flex-start;">
                 <button class="btn btn-secondary" onclick="previewBulk()">預覽判讀結果</button>
                 <button class="btn btn-primary" id="bulkAddBtn" onclick="confirmBulk()" style="display:none;">確認匯入</button>
-                <button class="btn btn-secondary" onclick="clearBulk()" style="display:none;" id="bulkClearBtn">清除</button>
+                <button class="btn btn-secondary" onclick="clearBulk()" id="bulkClearBtn">清除</button>
             </div>
             <div id="bulkMsg" class="msg"></div>
             <div id="bulkPreview" class="import-preview"></div>
@@ -623,7 +623,6 @@ function clearBulk() {
     document.getElementById('bulkInput').value = '';
     document.getElementById('bulkPreview').innerHTML = '';
     document.getElementById('bulkAddBtn').style.display = 'none';
-    document.getElementById('bulkClearBtn').style.display = 'none';
     bulkParsed = [];
 }
 
