@@ -794,6 +794,7 @@ function processBom(file) {
         });
 
         document.getElementById('bomBatchArea').style.display = '';
+        showMsg(`從 ${file.name} 讀取到 ${bomItems.length} 筆品項`, 'success', 'bomMsg');
         renderBomTable();
     };
     if (file.name.endsWith('.csv')) reader.readAsText(file);
