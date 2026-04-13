@@ -562,13 +562,9 @@ function previewBulk() {
             const existingItem = codesCache.find(c => c.code === parsed.code);
             const dupInBatch = bulkParsed.find(p => p.status === 'valid' && p.code === parsed.code);
             if (existingItem) {
-                const descPart = existingItem.description ? `，描述：${existingItem.description}` : '';
-                const dupInfo = `料號：${existingItem.code}${descPart}`;
-                bulkParsed.push({ ...parsed, desc, status: 'duplicate', dupSource: 'db', dupInfo });
+                bulkParsed.push({ ...parsed, desc, status: 'duplicate', dupSource: 'db', dupCode: existingItem.code, dupDesc: existingItem.description || '' });
             } else if (dupInBatch) {
-                const descPart = dupInBatch.desc ? `，描述：${dupInBatch.desc}` : '';
-                const dupInfo = `本次匯入重複（料號：${dupInBatch.code}${descPart}）`;
-                bulkParsed.push({ ...parsed, desc, status: 'duplicate', dupSource: 'batch', dupInfo });
+                bulkParsed.push({ ...parsed, desc, status: 'duplicate', dupSource: 'batch', dupCode: dupInBatch.code, dupDesc: dupInBatch.desc || '' });
             } else {
                 bulkParsed.push({ ...parsed, desc, status: 'valid' });
             }
@@ -594,7 +590,13 @@ function renderBulkPreview() {
         if (p.status !== 'invalid') html += `<td>${p.attr}</td><td>${p.source}</td><td>${p.materialCode} ${p.material}</td><td>${p.grade}</td>`;
         else html += `<td colspan="4" style="color:#c62828;">${p.reason}</td>`;
         html += `<td>${p.desc || '-'}</td>`;
-        html += `<td style="font-size:0.8rem;color:#e65100;">${p.dupInfo || '-'}</td></tr>`;
+        if (p.status === 'duplicate') {
+            const srcLabel = p.dupSource === 'db' ? '資料庫既有' : '本次匯入';
+            html += `<td style="font-size:0.8rem;color:#e65100;">${srcLabel}<br>編碼：<strong>${p.dupCode}</strong>${p.dupDesc ? '<br>描述：' + p.dupDesc : ''}</td>`;
+        } else {
+            html += `<td>-</td>`;
+        }
+        html += `</tr>`;
     });
     html += '</tbody></table>';
     document.getElementById('bulkPreview').innerHTML = html;
@@ -670,9 +672,7 @@ function processFile(file) {
             seen.add(c.code);
             const existingItem = codesCache.find(ex => ex.code === c.code);
             if (existingItem) {
-                const descPart = existingItem.description ? `，描述：${existingItem.description}` : '';
-                const dupInfo = `料號：${existingItem.code}${descPart}`;
-                fileParsed.push({ ...c, status: 'duplicate', dupInfo });
+                fileParsed.push({ ...c, status: 'duplicate', dupCode: existingItem.code, dupDesc: existingItem.description || '' });
             } else {
                 fileParsed.push({ ...c, status: 'valid' });
             }
@@ -687,7 +687,12 @@ function processFile(file) {
             const cls = p.status === 'valid' ? 'valid' : 'duplicate';
             const fileStatusText = p.status === 'valid' ? '可匯入' : '重複';
             html += `<tr><td class="${cls}">${fileStatusText}</td><td class="code-cell">${p.code}</td><td>${p.attr}</td><td>${p.source}</td><td>${p.materialCode} ${p.material}</td><td>${p.grade}</td><td>${p.desc || '-'}</td>`;
-            html += `<td style="font-size:0.8rem;color:#e65100;">${p.dupInfo || '-'}</td></tr>`;
+            if (p.status === 'duplicate') {
+                html += `<td style="font-size:0.8rem;color:#e65100;">資料庫既有<br>編碼：<strong>${p.dupCode}</strong>${p.dupDesc ? '<br>描述：' + p.dupDesc : ''}</td>`;
+            } else {
+                html += `<td>-</td>`;
+            }
+            html += `</tr>`;
         });
         html += '</tbody></table>';
         document.getElementById('filePreview').innerHTML = html;
