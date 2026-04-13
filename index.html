@@ -554,10 +554,27 @@ function previewBulk() {
     if (!raw) { showMsg('請先貼上編碼資料', 'error', 'bulkMsg'); return; }
     const lines = raw.split('\n').filter(l => l.trim());
     bulkParsed = [];
-    lines.forEach(line => {
+
+    // 偵測是否為標題列（含「料號」「編碼」等關鍵字），若是則跳過
+    const headerKeywords = ['料號', '編碼', '品名', '規格', '單位', '數量', '層次'];
+    const firstLine = lines[0];
+    const startIdx = headerKeywords.some(kw => firstLine.includes(kw)) ? 1 : 0;
+
+    for (let i = startIdx; i < lines.length; i++) {
+        const line = lines[i];
         const parts = line.split(/[,\t]+/).map(s => s.trim());
-        const parsed = parseCode(parts[0]);
-        const desc = parts.slice(1).join(', ');
+
+        // 掃描所有欄位，找出第一個合法編碼
+        let parsed = null;
+        let codeIdx = -1;
+        for (let j = 0; j < parts.length; j++) {
+            parsed = parseCode(parts[j]);
+            if (parsed) { codeIdx = j; break; }
+        }
+
+        // 描述：把非編碼、非純數字的欄位組合成描述
+        const desc = parts.filter((p, idx) => idx !== codeIdx && p && !/^\d+(\.\d+)?$/.test(p) && !parseCode(p)).join(', ');
+
         if (parsed) {
             const existingItem = codesCache.find(c => c.code === parsed.code);
             const dupInBatch = bulkParsed.find(p => p.status === 'valid' && p.code === parsed.code);
@@ -569,9 +586,11 @@ function previewBulk() {
                 bulkParsed.push({ ...parsed, desc, status: 'valid' });
             }
         } else {
-            bulkParsed.push({ code: parts[0], desc, status: 'invalid', reason: '格式不符' });
+            // 整行都找不到合法編碼，標記為無法辨識
+            const rawCode = parts.find(p => p.length >= 6 && /[A-Za-z]/.test(p)) || parts[0];
+            bulkParsed.push({ code: rawCode, desc, status: 'invalid', reason: '找不到合法編碼' });
         }
-    });
+    }
     renderBulkPreview();
 }
 
