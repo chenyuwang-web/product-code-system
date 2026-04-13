@@ -559,8 +559,17 @@ function previewBulk() {
         const parsed = parseCode(parts[0]);
         const desc = parts.slice(1).join(', ');
         if (parsed) {
-            const dup = codesCache.some(c => c.code === parsed.code) || bulkParsed.some(p => p.status === 'valid' && p.code === parsed.code);
-            bulkParsed.push({ ...parsed, desc, status: dup ? 'duplicate' : 'valid' });
+            const existingItem = codesCache.find(c => c.code === parsed.code);
+            const dupInBatch = bulkParsed.find(p => p.status === 'valid' && p.code === parsed.code);
+            if (existingItem) {
+                const dupInfo = existingItem.description ? `資料庫既有品項「${existingItem.description}」` : `資料庫既有品項（編碼：${existingItem.code}）`;
+                bulkParsed.push({ ...parsed, desc, status: 'duplicate', dupSource: 'db', dupInfo });
+            } else if (dupInBatch) {
+                const dupInfo = dupInBatch.desc ? `本次匯入品項「${dupInBatch.desc}」` : `本次匯入品項（編碼：${dupInBatch.code}）`;
+                bulkParsed.push({ ...parsed, desc, status: 'duplicate', dupSource: 'batch', dupInfo });
+            } else {
+                bulkParsed.push({ ...parsed, desc, status: 'valid' });
+            }
         } else {
             bulkParsed.push({ code: parts[0], desc, status: 'invalid', reason: '格式不符' });
         }
@@ -575,14 +584,15 @@ function renderBulkPreview() {
     let html = `<p style="font-size:0.85rem;margin-bottom:10px;">判讀結果：<span class="valid">可匯入 ${valid} 筆</span>`;
     if (dup) html += `、<span class="duplicate">重複 ${dup} 筆</span>`;
     if (invalid) html += `、<span class="invalid">無法辨識 ${invalid} 筆</span>`;
-    html += `</p><table><thead><tr><th>狀態</th><th>編碼</th><th>屬性</th><th>來源</th><th>物料類型</th><th>品別</th><th>描述</th></tr></thead><tbody>`;
+    html += `</p><table><thead><tr><th>狀態</th><th>編碼</th><th>屬性</th><th>來源</th><th>物料類型</th><th>品別</th><th>描述</th><th>衝突品項</th></tr></thead><tbody>`;
     bulkParsed.forEach(p => {
         const cls = p.status === 'valid' ? 'valid' : p.status === 'duplicate' ? 'duplicate' : 'invalid';
-        const statusText = p.status === 'valid' ? '可匯入' : p.status === 'duplicate' ? '已存在' : '無法辨識';
+        const statusText = p.status === 'valid' ? '可匯入' : p.status === 'duplicate' ? '重複' : '無法辨識';
         html += `<tr><td class="${cls}">${statusText}</td><td class="code-cell">${p.code || '-'}</td>`;
         if (p.status !== 'invalid') html += `<td>${p.attr}</td><td>${p.source}</td><td>${p.materialCode} ${p.material}</td><td>${p.grade}</td>`;
         else html += `<td colspan="4" style="color:#c62828;">${p.reason}</td>`;
-        html += `<td>${p.desc || '-'}</td></tr>`;
+        html += `<td>${p.desc || '-'}</td>`;
+        html += `<td style="font-size:0.8rem;color:#e65100;">${p.dupInfo || '-'}</td></tr>`;
     });
     html += '</tbody></table>';
     document.getElementById('bulkPreview').innerHTML = html;
@@ -656,17 +666,25 @@ function processFile(file) {
         allCodes.forEach(c => {
             if (seen.has(c.code)) return;
             seen.add(c.code);
-            fileParsed.push({ ...c, status: codesCache.some(ex => ex.code === c.code) ? 'duplicate' : 'valid' });
+            const existingItem = codesCache.find(ex => ex.code === c.code);
+            if (existingItem) {
+                const dupInfo = existingItem.description ? `資料庫既有品項「${existingItem.description}」` : `資料庫既有品項（編碼：${existingItem.code}）`;
+                fileParsed.push({ ...c, status: 'duplicate', dupInfo });
+            } else {
+                fileParsed.push({ ...c, status: 'valid' });
+            }
         });
         if (!fileParsed.length) { showMsg('檔案中找不到符合編碼格式的資料', 'error', 'fileMsg'); return; }
         const valid = fileParsed.filter(p => p.status === 'valid').length;
         const dup = fileParsed.filter(p => p.status === 'duplicate').length;
         let html = `<p style="font-size:0.85rem;margin:14px 0 10px;">從 <strong>${file.name}</strong> 偵測到 ${fileParsed.length} 筆編碼：<span class="valid">可匯入 ${valid} 筆</span>`;
         if (dup) html += `、<span class="duplicate">重複 ${dup} 筆</span>`;
-        html += `</p><table><thead><tr><th>狀態</th><th>編碼</th><th>屬性</th><th>來源</th><th>物料類型</th><th>品別</th><th>描述</th></tr></thead><tbody>`;
+        html += `</p><table><thead><tr><th>狀態</th><th>編碼</th><th>屬性</th><th>來源</th><th>物料類型</th><th>品別</th><th>描述</th><th>衝突品項</th></tr></thead><tbody>`;
         fileParsed.forEach(p => {
             const cls = p.status === 'valid' ? 'valid' : 'duplicate';
-            html += `<tr><td class="${cls}">${p.status === 'valid' ? '可匯入' : '已存在'}</td><td class="code-cell">${p.code}</td><td>${p.attr}</td><td>${p.source}</td><td>${p.materialCode} ${p.material}</td><td>${p.grade}</td><td>${p.desc || '-'}</td></tr>`;
+            const fileStatusText = p.status === 'valid' ? '可匯入' : '重複';
+            html += `<tr><td class="${cls}">${fileStatusText}</td><td class="code-cell">${p.code}</td><td>${p.attr}</td><td>${p.source}</td><td>${p.materialCode} ${p.material}</td><td>${p.grade}</td><td>${p.desc || '-'}</td>`;
+            html += `<td style="font-size:0.8rem;color:#e65100;">${p.dupInfo || '-'}</td></tr>`;
         });
         html += '</tbody></table>';
         document.getElementById('filePreview').innerHTML = html;
