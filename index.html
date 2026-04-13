@@ -560,9 +560,25 @@ function previewBulk() {
     const firstLine = lines[0];
     const startIdx = headerKeywords.some(kw => firstLine.includes(kw)) ? 1 : 0;
 
+    // 偵測階層欄位位置：找標題列中含「層」「level」的欄位索引，或預設第一欄為純數字時當階層
+    let levelIdx = -1;
+    if (startIdx === 1) {
+        const headerParts = lines[0].split(/[,\t]+/).map(s => s.trim());
+        levelIdx = headerParts.findIndex(h => /層|level/i.test(h));
+    }
+
     for (let i = startIdx; i < lines.length; i++) {
         const line = lines[i];
         const parts = line.split(/[,\t]+/).map(s => s.trim());
+
+        // 抓取階層值
+        let level = '';
+        if (levelIdx >= 0 && parts[levelIdx] !== undefined) {
+            level = parts[levelIdx];
+        } else if (parts[0] && /^\d+$/.test(parts[0])) {
+            // 第一欄是純數字，視為階層
+            level = parts[0];
+        }
 
         // 掃描所有欄位，找出第一個合法編碼
         let parsed = null;
@@ -579,16 +595,16 @@ function previewBulk() {
             const existingItem = codesCache.find(c => c.code === parsed.code);
             const dupInBatch = bulkParsed.find(p => p.status === 'valid' && p.code === parsed.code);
             if (existingItem) {
-                bulkParsed.push({ ...parsed, desc, status: 'duplicate', dupSource: 'db', dupCode: existingItem.code, dupDesc: existingItem.description || '' });
+                bulkParsed.push({ ...parsed, desc, level, status: 'duplicate', dupSource: 'db', dupCode: existingItem.code, dupDesc: existingItem.description || '' });
             } else if (dupInBatch) {
-                bulkParsed.push({ ...parsed, desc, status: 'duplicate', dupSource: 'batch', dupCode: dupInBatch.code, dupDesc: dupInBatch.desc || '' });
+                bulkParsed.push({ ...parsed, desc, level, status: 'duplicate', dupSource: 'batch', dupCode: dupInBatch.code, dupDesc: dupInBatch.desc || '' });
             } else {
-                bulkParsed.push({ ...parsed, desc, status: 'valid' });
+                bulkParsed.push({ ...parsed, desc, level, status: 'valid' });
             }
         } else {
             // 整行都找不到合法編碼，標記為無法辨識
             const rawCode = parts.find(p => p.length >= 6 && /[A-Za-z]/.test(p)) || parts[0];
-            bulkParsed.push({ code: rawCode, desc, status: 'invalid', reason: '找不到合法編碼' });
+            bulkParsed.push({ code: rawCode, desc, level, status: 'invalid', reason: '找不到合法編碼' });
         }
     }
     renderBulkPreview();
@@ -601,11 +617,17 @@ function renderBulkPreview() {
     let html = `<p style="font-size:0.85rem;margin-bottom:10px;">判讀結果：<span class="valid">可匯入 ${valid} 筆</span>`;
     if (dup) html += `、<span class="duplicate">重複 ${dup} 筆</span>`;
     if (invalid) html += `、<span class="invalid">無法辨識 ${invalid} 筆</span>`;
-    html += `</p><table><thead><tr><th>狀態</th><th>編碼</th><th>屬性</th><th>來源</th><th>物料類型</th><th>品別</th><th>描述</th><th>衝突品項</th></tr></thead><tbody>`;
+    // 判斷是否有階層資料
+    const hasLevel = bulkParsed.some(p => p.level !== undefined && p.level !== '');
+    html += `</p><table><thead><tr><th>狀態</th>`;
+    if (hasLevel) html += `<th>階層</th>`;
+    html += `<th>編碼</th><th>屬性</th><th>來源</th><th>物料類型</th><th>品別</th><th>描述</th><th>衝突品項</th></tr></thead><tbody>`;
     bulkParsed.forEach(p => {
         const cls = p.status === 'valid' ? 'valid' : p.status === 'duplicate' ? 'duplicate' : 'invalid';
         const statusText = p.status === 'valid' ? '可匯入' : p.status === 'duplicate' ? '重複' : '無法辨識';
-        html += `<tr><td class="${cls}">${statusText}</td><td class="code-cell">${p.code || '-'}</td>`;
+        html += `<tr><td class="${cls}">${statusText}</td>`;
+        if (hasLevel) html += `<td style="text-align:center;">${p.level !== undefined && p.level !== '' ? p.level : '-'}</td>`;
+        html += `<td class="code-cell">${p.code || '-'}</td>`;
         if (p.status !== 'invalid') html += `<td>${p.attr}</td><td>${p.source}</td><td>${p.materialCode} ${p.material}</td><td>${p.grade}</td>`;
         else html += `<td colspan="4" style="color:#c62828;">${p.reason}</td>`;
         html += `<td>${p.desc || '-'}</td>`;
