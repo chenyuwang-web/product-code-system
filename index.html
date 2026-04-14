@@ -250,6 +250,60 @@
         <input type="file" id="bomFile" accept=".xlsx,.csv" style="display:none" onchange="handleBomSelect(event)">
 
         <div id="bomBatchArea" style="display:none;margin-top:18px;">
+            <!-- 自動編碼功能 -->
+            <div style="background:#e8f0fe;border-radius:10px;padding:16px 20px;margin-bottom:18px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+                    <div>
+                        <strong style="color:#1a73e8;font-size:0.95rem;">&#9889; 系統自動編碼</strong>
+                        <p style="font-size:0.8rem;color:#555;margin-top:4px;">根據品項名稱自動判斷物料類型，一鍵產生所有編碼</p>
+                    </div>
+                    <button class="btn btn-primary" onclick="autoBomCode()" style="padding:8px 24px;">自動編碼</button>
+                </div>
+                <div class="form-grid" style="margin-top:12px;">
+                    <div class="form-group">
+                        <label>預設屬性</label>
+                        <select id="autoAttr">
+                            <option value="C">C - 物料</option>
+                            <option value="A">A - 成品</option>
+                            <option value="B">B - 半成品</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>預設產品來源</label>
+                        <select id="autoSource">
+                            <option value="2">2 - 客供產品</option>
+                            <option value="1">1 - 自製產品</option>
+                            <option value="3">3 - 外購</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>預設品別</label>
+                        <select id="autoGrade">
+                            <option value="N">N - 新品</option>
+                            <option value="R">R - 維修品</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>無法判斷時的物料類型</label>
+                        <select id="autoFallbackMat">
+                            <option value="CON">CON - 一般耗材類</option>
+                            <option value="ELE">ELE - 電子電控類</option>
+                            <option value="MEC">MEC - 金屬材料/加工件類</option>
+                            <option value="PLA">PLA - 塑膠原料類</option>
+                            <option value="PAC">PAC - 包裝/紙材類</option>
+                            <option value="CHE">CHE - 化學耗材類</option>
+                            <option value="FAS">FAS - 標準鎖附五金類</option>
+                            <option value="PNE">PNE - 氣動氣路類</option>
+                            <option value="TRA">TRA - 傳動元件類</option>
+                            <option value="RUB">RUB - 橡膠/矽膠類</option>
+                            <option value="CAB">CAB - 線材/線纜類</option>
+                            <option value="OPT">OPT - 光學元件類</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="autoResult" style="margin-top:10px;font-size:0.85rem;color:#333;display:none;"></div>
+            </div>
+
             <h3 style="font-size:1rem;color:#333;margin-bottom:12px;">批次設定（套用到所有品項）</h3>
             <div class="form-grid">
                 <div class="form-group">
@@ -1021,6 +1075,98 @@ function getNextBomSerial(attr, source, material, grade, currentIdx) {
 }
 
 function updateBomPreview() { renderBomTable(); }
+
+// === 自動編碼邏輯 ===
+const AUTO_MATERIAL_RULES = [
+    // 電子電控類
+    { mat: 'ELE', keywords: ['電子', '電控', '電路板', 'PCB', '控制板', '控制器', '電源', '感測', 'sensor', '電磁閥', 'solenoid', '馬達', 'motor', '繼電器', 'relay', '變頻', '電容', '電阻', '二極體', 'LED', 'MOXA', '面板', 'PLC', '模組'] },
+    // 氣動氣路類
+    { mat: 'PNE', keywords: ['氣動', '氣缸', '氣路', '氣管', '閥', '接頭', 'pneumatic', '調壓', '過濾器', '消音器'] },
+    // 金屬材料/加工件類
+    { mat: 'MEC', keywords: ['金屬', '鋁', '鋼', '銅', '鐵', '不鏽鋼', 'SUS', 'SS400', '支架', '固定架', '底板', '板金', '襯套', '螺桿', '軸', '光罩盒', '機殼', '框', '座', '蓋板', '鉚合', '沖壓', '鑄', '鍛', '切削', '車削', '銑', '焊', '鍍鋅', '烤漆', '陽極'] },
+    // 包裝/紙材類
+    { mat: 'PAC', keywords: ['包裝', '紙箱', '外箱', '外銷箱', '棧板', '氣泡', '膠膜', '珍珠棉', 'PE袋', '無塵袋', '整理箱', '緩衝', '紙材', '瓦楞', '格板', '套板'] },
+    // 塑膠原料類
+    { mat: 'PLA', keywords: ['塑膠', '射出', 'PVC', 'PC', 'ABS', 'PP', 'PE', 'POM', '尼龍', 'nylon', '壓克力', 'acrylic', '天鵝頭', '門扣', '鎖扣', 'GDA'] },
+    // 化學耗材類
+    { mat: 'CHE', keywords: ['化學', '溶劑', '清潔', '潤滑', '黏著', '膠水', '矽利康', '銘板', '印刷', '標籤', '雷雕'] },
+    // 標準鎖附五金類
+    { mat: 'FAS', keywords: ['螺絲', '螺帽', '螺栓', '墊片', '華司', '鉚釘', '扣環', '彈簧', '插銷', '定位銷', '六角'] },
+    // 傳動元件類
+    { mat: 'TRA', keywords: ['傳動', '軸承', '皮帶', '齒輪', '鏈條', '聯軸', '滑軌', '線性', '導軌', '滾珠'] },
+    // 橡膠/矽膠類
+    { mat: 'RUB', keywords: ['橡膠', '矽膠', 'O-ring', 'O型環', '密封', '膠條', '襯墊', '緩衝墊'] },
+    // 線材/線纜類
+    { mat: 'CAB', keywords: ['線材', '線纜', '電纜', '排線', '訊號線', '電源線', '連接線', 'cable', 'wire'] },
+    // 光學元件類
+    { mat: 'OPT', keywords: ['光學', '光罩', '透鏡', '鏡片', '濾鏡', 'lens', 'photomask', 'reticle', 'mask'] },
+    // 一般耗材類
+    { mat: 'CON', keywords: ['耗材', '消耗', '備品'] },
+    // 產品類
+    { mat: 'RSP', keywords: ['RSP', 'SMIF Pod', 'Reticle SMIF'] },
+    { mat: 'FOS', keywords: ['FOS', 'FOSB', 'Front Opening Shipping'] },
+    { mat: 'LMB', keywords: ['LMB', 'Large Mask Box'] },
+    { mat: 'FOU', keywords: ['FOU', 'FOUP', 'Front Opening Unified'] },
+    { mat: 'OVT', keywords: ['OVT', 'Oval Tube'] },
+    { mat: 'ARS', keywords: ['ARS', 'RSP Assembly Machine'] },
+    { mat: 'ANJ', keywords: ['ANJ', 'Night Jar'] },
+    { mat: 'OHB', keywords: ['OHB', 'Overhead Hoist', '配置盤'] },
+    { mat: 'AOI', keywords: ['AOI', 'Optical Inspection'] },
+];
+
+function detectMaterial(name) {
+    const upper = name.toUpperCase();
+    for (const rule of AUTO_MATERIAL_RULES) {
+        for (const kw of rule.keywords) {
+            if (upper.includes(kw.toUpperCase())) return rule.mat;
+        }
+    }
+    return null;
+}
+
+function autoBomCode() {
+    if (!bomItems.length) { showMsg('請先上傳 BOM 檔案', 'error', 'bomMsg'); return; }
+
+    const defaultAttr = document.getElementById('autoAttr').value;
+    const defaultSource = document.getElementById('autoSource').value;
+    const defaultGrade = document.getElementById('autoGrade').value;
+    const fallbackMat = document.getElementById('autoFallbackMat').value;
+
+    let autoCount = 0, fallbackCount = 0;
+
+    bomItems.forEach(item => {
+        if (!item.checked) return;
+
+        // 設定屬性、來源、品別
+        item.attr = defaultAttr;
+        item.source = defaultSource;
+        item.grade = defaultGrade;
+
+        // 自動偵測物料類型
+        const detected = detectMaterial(item.name);
+        if (detected) {
+            item.material = detected;
+            autoCount++;
+        } else {
+            item.material = fallbackMat;
+            fallbackCount++;
+        }
+    });
+
+    // 清除批次設定（因為已經各別指定了）
+    document.getElementById('bomAttr').value = '';
+    document.getElementById('bomSource').value = '';
+    document.getElementById('bomMaterial').value = '';
+    document.getElementById('bomGrade').value = '';
+
+    renderBomTable();
+
+    const resultEl = document.getElementById('autoResult');
+    resultEl.style.display = '';
+    resultEl.innerHTML = `<span style="color:#2e7d32;">&#10003; 自動編碼完成！</span> 成功辨識 <strong>${autoCount}</strong> 筆`;
+    if (fallbackCount) resultEl.innerHTML += `，<span style="color:#e65100;">${fallbackCount} 筆無法判斷，已套用預設類型「${fallbackMat}」</span>`;
+    resultEl.innerHTML += `<br><span style="color:#888;font-size:0.8rem;">提示：你可以在下方表格中個別調整物料類型</span>`;
+}
 
 async function confirmBom() {
     const toAdd = bomItems.filter(item => item.checked && item.generatedCode);
