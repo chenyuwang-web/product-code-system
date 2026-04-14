@@ -1030,18 +1030,25 @@ function renderBomTable() {
         const matOpts = VALID_MATERIAL.map(v => [v, v]);
         const gradeOpts = [['N','新品'],['R','維修品']];
 
-        html += `<tr>
+        const missing = [];
+        if (!a) missing.push('屬性');
+        if (!s) missing.push('來源');
+        if (!m) missing.push('物料類型');
+        if (!g) missing.push('品別');
+        const rowStyle = (!code && item.checked) ? 'background:#fff5f5;' : '';
+
+        html += `<tr style="${rowStyle}">
             <td><input type="checkbox" ${item.checked ? 'checked' : ''} onchange="bomItems[${idx}].checked=this.checked"></td>
             <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${item.name}">${item.name}</td>
-            <td><select onchange="bomItems[${idx}].attr=this.value;updateBomPreview()" style="padding:4px;border-radius:6px;border:1px solid #ddd;font-size:0.85rem;"${batchAttr ? ' disabled' : ''}>
+            <td><select onchange="bomItems[${idx}].attr=this.value;updateBomPreview()" style="padding:4px;border-radius:6px;border:1px solid ${!a && item.checked ? '#d32f2f' : '#ddd'};font-size:0.85rem;"${batchAttr ? ' disabled' : ''}>
                 <option value="">--</option>${attrOpts.map(([v]) => `<option value="${v}"${a===v?' selected':''}>${v}</option>`).join('')}</select></td>
-            <td><select onchange="bomItems[${idx}].source=this.value;updateBomPreview()" style="padding:4px;border-radius:6px;border:1px solid #ddd;font-size:0.85rem;"${batchSource ? ' disabled' : ''}>
+            <td><select onchange="bomItems[${idx}].source=this.value;updateBomPreview()" style="padding:4px;border-radius:6px;border:1px solid ${!s && item.checked ? '#d32f2f' : '#ddd'};font-size:0.85rem;"${batchSource ? ' disabled' : ''}>
                 <option value="">--</option>${srcOpts.map(([v]) => `<option value="${v}"${s===v?' selected':''}>${v}</option>`).join('')}</select></td>
-            <td><select onchange="bomItems[${idx}].material=this.value;updateBomPreview()" style="padding:4px;border-radius:6px;border:1px solid #ddd;font-size:0.85rem;"${batchMat ? ' disabled' : ''}>
+            <td><select onchange="bomItems[${idx}].material=this.value;updateBomPreview()" style="padding:4px;border-radius:6px;border:1px solid ${!m && item.checked ? '#d32f2f' : '#ddd'};font-size:0.85rem;"${batchMat ? ' disabled' : ''}>
                 <option value="">--</option>${matOpts.map(([v]) => `<option value="${v}"${m===v?' selected':''}>${v}</option>`).join('')}</select></td>
-            <td><select onchange="bomItems[${idx}].grade=this.value;updateBomPreview()" style="padding:4px;border-radius:6px;border:1px solid #ddd;font-size:0.85rem;"${batchGrade ? ' disabled' : ''}>
+            <td><select onchange="bomItems[${idx}].grade=this.value;updateBomPreview()" style="padding:4px;border-radius:6px;border:1px solid ${!g && item.checked ? '#d32f2f' : '#ddd'};font-size:0.85rem;"${batchGrade ? ' disabled' : ''}>
                 <option value="">--</option>${gradeOpts.map(([v]) => `<option value="${v}"${g===v?' selected':''}>${v}</option>`).join('')}</select></td>
-            <td class="code-cell">${code || '<span style="color:#aaa;">待指定</span>'}</td>
+            <td class="code-cell">${code ? code : (item.checked ? '<span style="color:#d32f2f;font-weight:600;">缺少：' + missing.join('、') + '</span>' : '<span style="color:#aaa;">已跳過</span>')}</td>
         </tr>`;
     });
     document.getElementById('bomBody').innerHTML = html;
