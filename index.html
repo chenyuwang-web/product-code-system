@@ -356,7 +356,7 @@
             <div style="margin-top:16px;overflow-x:auto;">
                 <table id="bomTable"><thead><tr>
                     <th><input type="checkbox" id="bomCheckAll" checked onchange="toggleBomAll(this.checked)"></th>
-                    <th>品項名稱</th><th>屬性</th><th>來源</th><th>物料類型</th><th>品別</th><th>產生編碼</th>
+                    <th>品項名稱</th><th>原廠料號</th><th>屬性</th><th>來源</th><th>物料類型</th><th>品別</th><th>產生編碼</th>
                 </tr></thead><tbody id="bomBody"></tbody></table>
             </div>
 
@@ -971,14 +971,16 @@ function processBom(file) {
 
         if (!rows.length) { showMsg('檔案中沒有找到資料', 'error', 'bomMsg'); return; }
 
-        // 偵測階層欄位
+        // 偵測階層欄位與原廠料號欄位
         const keys = Object.keys(rows[0] || {});
         const levelKey = keys.find(k => /層|level/i.test(k)) || '';
+        const partNoKey = keys.find(k => /原廠料號|元件號碼|項目號碼|客戶料號|part.?no|part.?number/i.test(k)) || '';
 
         bomItems = rows.map((row, i) => {
             const name = Object.values(row).filter(v => v && typeof v === 'string' && v.length > 1).join(' / ');
             const level = levelKey ? String(row[levelKey]).trim() : '';
-            return { id: i, name: name || `品項 ${i+1}`, rawData: row, level, checked: true, attr: '', source: '', material: '', grade: '', generatedCode: '' };
+            const partNo = partNoKey ? String(row[partNoKey]).trim() : '';
+            return { id: i, name: name || `品項 ${i+1}`, rawData: row, level, partNo, checked: true, attr: '', source: '', material: '', grade: '', generatedCode: '' };
         });
 
         document.getElementById('bomBatchArea').style.display = '';
@@ -1009,6 +1011,9 @@ function renderBomTable() {
     };
 
     let html = '';
+    // 原廠料號 → 已產生的編碼 對照表（相同料號共用編碼）
+    const partNoCodeMap = {};
+
     bomItems.forEach((item, idx) => {
         const a = batchAttr || item.attr;
         const s = batchSource || item.source;
@@ -1017,8 +1022,15 @@ function renderBomTable() {
 
         let code = '';
         if (a && s && m && g) {
-            const serial = getNextBomSerial(a, s, m, g, idx);
-            code = a + s + m + g + serial;
+            // 如果有原廠料號且之前已經產生過編碼，直接沿用
+            if (item.partNo && partNoCodeMap[item.partNo]) {
+                code = partNoCodeMap[item.partNo];
+            } else {
+                const serial = getNextBomSerial(a, s, m, g, idx);
+                code = a + s + m + g + serial;
+                // 記錄原廠料號對應的編碼
+                if (item.partNo) partNoCodeMap[item.partNo] = code;
+            }
         }
         item.generatedCode = code;
 
@@ -1038,6 +1050,7 @@ function renderBomTable() {
         html += `<tr style="${rowStyle}">
             <td><input type="checkbox" ${item.checked ? 'checked' : ''} onchange="bomItems[${idx}].checked=this.checked"></td>
             <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isFallback ? 'color:#d32f2f;' : ''}" title="${item.name}">${item.name}</td>
+            <td style="font-size:0.8rem;color:#666;white-space:nowrap;">${item.partNo || '-'}</td>
             <td><select onchange="bomItems[${idx}].attr=this.value;updateBomPreview()" style="padding:4px;border-radius:6px;border:1px solid ${!a && item.checked ? '#d32f2f' : '#ddd'};font-size:0.85rem;"${batchAttr ? ' disabled' : ''}>
                 <option value="">--</option>${attrOpts.map(([v]) => `<option value="${v}"${a===v?' selected':''}>${v}</option>`).join('')}</select></td>
             <td><select onchange="bomItems[${idx}].source=this.value;updateBomPreview()" style="padding:4px;border-radius:6px;border:1px solid ${!s && item.checked ? '#d32f2f' : '#ddd'};font-size:0.85rem;"${batchSource ? ' disabled' : ''}>
@@ -1061,6 +1074,7 @@ function getNextBomSerial(attr, source, material, grade, currentIdx) {
     const batchMat = document.getElementById('bomMaterial').value;
     const batchGrade = document.getElementById('bomGrade').value;
 
+    const seenCodes = new Set();
     for (let i = 0; i < currentIdx; i++) {
         const item = bomItems[i];
         if (!item.checked) continue;
@@ -1068,12 +1082,13 @@ function getNextBomSerial(attr, source, material, grade, currentIdx) {
         const is = batchSource || item.source;
         const im = batchMat || item.material;
         const ig = batchGrade || item.grade;
-        if ((ia + is + im + ig) === prefix && item.generatedCode) {
+        if ((ia + is + im + ig) === prefix && item.generatedCode && !seenCodes.has(item.generatedCode)) {
+            seenCodes.add(item.generatedCode);
             usedInBom.push(parseInt(item.generatedCode.slice(-4)));
         }
     }
 
-    const allUsed = [...usedInDb, ...usedInBom].sort((a, b) => a - b);
+    const allUsed = [...new Set([...usedInDb, ...usedInBom])].sort((a, b) => a - b);
     let next = 1;
     for (const n of allUsed) { if (n === next) next++; else if (n > next) break; }
     return String(next).padStart(4, '0');
