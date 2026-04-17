@@ -716,32 +716,70 @@ function cancelEdit() {
     renderTable();
 }
 
-async function saveEdit(code) {
-    const row = document.querySelector(`tr[data-code="${code}"]`);
+async function saveEdit(origCode) {
+    const row = document.querySelector(`tr[data-code="${origCode}"]`);
     if (!row) return;
+    const codeEl = row.querySelector('[data-field="code"]');
     const sourceEl = row.querySelector('[data-field="source"]');
     const matEl = row.querySelector('[data-field="material"]');
     const gradeEl = row.querySelector('[data-field="grade"]');
     const descEl = row.querySelector('[data-field="desc"]');
 
-    const SOURCE_REVERSE = {'自製產品':'自製','客供產品':'客供','外購':'外購','自製':'自製','客供':'客供'};
+    const newCode = codeEl ? codeEl.value.trim().toUpperCase() : origCode;
     const newSource = sourceEl ? sourceEl.value : undefined;
     const newMatCode = matEl ? matEl.value : undefined;
     const newGrade = gradeEl ? gradeEl.value : undefined;
     const newDesc = descEl ? descEl.value.trim() : undefined;
 
-    const fields = {};
-    if (newSource !== undefined) { fields.source = newSource; }
-    if (newMatCode !== undefined) { fields.material_code = newMatCode; fields.material = MATERIAL_LABEL[newMatCode] || newMatCode; }
-    if (newGrade !== undefined) { fields.grade = newGrade; }
-    if (newDesc !== undefined) { fields.description = newDesc; }
+    // 驗證新編碼格式
+    if (newCode && newCode !== origCode) {
+        if (!/^[A-Z]\d[A-Z]{3}[A-Z]\d{4}$/.test(newCode)) {
+            showMsg('編碼格式不正確，需為 10 碼（如 A1MECN0001）', 'error');
+            return;
+        }
+        if (codesCache.some(c => c.code === newCode && c.code !== origCode)) {
+            showMsg(`編碼 ${newCode} 已存在，不可重複`, 'error');
+            return;
+        }
+    }
+
+    const codeChanged = newCode && newCode !== origCode;
 
     try {
-        await DB.update(code, fields);
+        if (codeChanged) {
+            // 編碼改變：需要刪除舊的、新增新的
+            const oldItem = codesCache.find(c => c.code === origCode);
+            const parsed = parseCode(newCode);
+            const newRow = {
+                code: newCode,
+                attr: parsed.attr || (oldItem && oldItem.attr) || '',
+                source: newSource !== undefined ? newSource : (oldItem && oldItem.source) || '',
+                material_code: newMatCode !== undefined ? newMatCode : (oldItem && oldItem.material_code) || '',
+                material: newMatCode !== undefined ? (MATERIAL_LABEL[newMatCode] || newMatCode) : (oldItem && oldItem.material) || '',
+                grade: newGrade !== undefined ? newGrade : (oldItem && oldItem.grade) || '',
+                description: newDesc !== undefined ? newDesc : (oldItem && oldItem.description) || ''
+            };
+            await DB.remove(origCode);
+            await DB.insert(newRow);
+            // 更新勾選狀態
+            if (selectedCodes.has(origCode)) {
+                selectedCodes.delete(origCode);
+                selectedCodes.add(newCode);
+            }
+            showMsg(`編碼已從 ${origCode} 更新為 ${newCode}`, 'success');
+        } else {
+            // 編碼不變：直接 PATCH
+            const fields = {};
+            if (newSource !== undefined) { fields.source = newSource; }
+            if (newMatCode !== undefined) { fields.material_code = newMatCode; fields.material = MATERIAL_LABEL[newMatCode] || newMatCode; }
+            if (newGrade !== undefined) { fields.grade = newGrade; }
+            if (newDesc !== undefined) { fields.description = newDesc; }
+            await DB.update(origCode, fields);
+            showMsg(`編碼 ${origCode} 已更新`, 'success');
+        }
         editingCode = null;
         await loadCodes();
         renderTable();
-        showMsg(`編碼 ${code} 已更新`, 'success');
     } catch (e) {
         showMsg('更新失敗：' + (e.message || e), 'error');
     }
@@ -824,9 +862,9 @@ function renderTable() {
         const checked = selectedCodes.has(c.code) ? 'checked' : '';
 
         let h = `<td><input type="checkbox" class="row-checkbox" data-code="${c.code}" ${checked} onchange="toggleSelect('${c.code}')"></td>`;
-        h += `<td class="code-cell">${c.code}</td>`;
 
         if (isEditing) {
+            h += `<td><input class="edit-input" data-field="code" value="${c.code}" style="font-family:Consolas,monospace;font-weight:600;letter-spacing:1px;width:110px;color:#1a73e8;" maxlength="10"></td>`;
             if (cols.source) h += `<td>${buildSourceSelect(c.source || '')}</td>`;
             if (cols.material) h += `<td>${buildMaterialSelect(c.material_code || '')}</td>`;
             if (cols.grade) h += `<td>${buildGradeSelect(c.grade || '')}</td>`;
@@ -834,6 +872,7 @@ function renderTable() {
             if (cols.date) h += `<td>${date}</td>`;
             h += `<td class="action-btns"><button class="save-btn" onclick="saveEdit('${c.code}')">儲存</button><button class="cancel-btn" onclick="cancelEdit()">取消</button></td>`;
         } else {
+            h += `<td class="code-cell">${c.code}</td>`;
             if (cols.source) h += `<td>${c.source || ''}</td>`;
             if (cols.material) h += `<td>${c.material_code || ''} ${c.material || ''}</td>`;
             if (cols.grade) h += `<td>${c.grade || ''}</td>`;
