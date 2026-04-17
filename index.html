@@ -971,10 +971,26 @@ function processBom(file) {
 
         if (!rows.length) { showMsg('檔案中沒有找到資料', 'error', 'bomMsg'); return; }
 
-        // 偵測階層欄位與原廠料號欄位
+        // 偵測階層欄位與料號欄位
         const keys = Object.keys(rows[0] || {});
         const levelKey = keys.find(k => /層|level/i.test(k)) || '';
-        const partNoKey = keys.find(k => /原廠料號|元件號碼|項目號碼|客戶料號|part.?no|part.?number/i.test(k)) || '';
+
+        // 料號欄位偵測：優先精確匹配，再模糊匹配
+        let partNoKey = keys.find(k => /原廠料號|客戶料號|廠商料號|供應商料號/i.test(k)) || '';
+        if (!partNoKey) partNoKey = keys.find(k => /元件號碼|項目號碼|物件號碼|物料號碼|零件號碼/i.test(k)) || '';
+        if (!partNoKey) partNoKey = keys.find(k => /part.?no|part.?number|item.?no|item.?code|material.?no/i.test(k)) || '';
+        if (!partNoKey) partNoKey = keys.find(k => /^料號$|^編號$|^號碼$/.test(k.trim())) || '';
+        // 如果還是沒有，找包含「料號」或「號碼」的欄位（但排除「新料號」和「展開層次」）
+        if (!partNoKey) partNoKey = keys.find(k => /料號|號碼/.test(k) && !/新料號|層/.test(k)) || '';
+        // 最後手段：掃描資料內容，找出含有「XXXX-XXXXXXX」格式的欄位
+        if (!partNoKey && rows.length > 0) {
+            for (const k of keys) {
+                if (k === levelKey) continue;
+                const sampleVals = rows.slice(0, 10).map(r => String(r[k] || '').trim()).filter(v => v);
+                const matchCount = sampleVals.filter(v => /^\d{4}-\d{5,}$/.test(v)).length;
+                if (matchCount >= 2) { partNoKey = k; break; }
+            }
+        }
 
         bomItems = rows.map((row, i) => {
             const name = Object.values(row).filter(v => v && typeof v === 'string' && v.length > 1).join(' / ');
@@ -984,7 +1000,13 @@ function processBom(file) {
         });
 
         document.getElementById('bomBatchArea').style.display = '';
-        showMsg(`從 ${file.name} 讀取到 ${bomItems.length} 筆品項`, 'success', 'bomMsg');
+        const partNoInfo = partNoKey ? `（料號欄位：「${partNoKey}」）` : '（未偵測到料號欄位）';
+        // 統計重複料號數量
+        const partNos = bomItems.map(i => i.partNo).filter(p => p);
+        const uniquePartNos = new Set(partNos);
+        const dupPartNoCount = partNos.length - uniquePartNos.size;
+        const dupInfo = dupPartNoCount > 0 ? `，其中 ${dupPartNoCount} 筆為重複料號（將自動共用編碼）` : '';
+        showMsg(`從 ${file.name} 讀取到 ${bomItems.length} 筆品項${dupInfo}${partNoInfo}`, 'success', 'bomMsg');
         renderBomTable();
     };
     if (file.name.endsWith('.csv')) reader.readAsText(file);
