@@ -692,6 +692,60 @@ function removeFromBomGroup(childCode) {
     assignParent(childCode, null);
 }
 
+// 自動偵測 BOM 歸屬：依匯入時間戳分批，同批內找成品作為 parent
+function autoDetectBomGroups() {
+    const map = loadBomParentMap();
+    const codes = codesCache;
+    if (!codes.length) return;
+
+    // 依 created_at 分組（同一秒內的視為同批）
+    const batches = {};
+    codes.forEach(c => {
+        if (!c.created_at) return;
+        // 取到秒級精度
+        const ts = c.created_at.substring(0, 19);
+        if (!batches[ts]) batches[ts] = [];
+        batches[ts].push(c);
+    });
+
+    // 對於每個批次，如果裡面有成品，就把其他項目歸到該成品
+    let changed = false;
+    Object.values(batches).forEach(batch => {
+        if (batch.length < 2) return; // 單筆不處理
+        const product = batch.find(c => c.attr === '成品');
+        if (!product) return;
+        batch.forEach(c => {
+            if (!map[c.code]) {
+                map[c.code] = product.code;
+                changed = true;
+            }
+        });
+    });
+
+    // 針對沒有同批成品的項目，嘗試用編碼前綴匹配
+    // 例如同一個 BOM 的物料通常 source 相同
+    const products = codes.filter(c => c.attr === '成品');
+    if (products.length > 0) {
+        codes.forEach(c => {
+            if (map[c.code] || c.attr === '成品') return;
+            // 找最近時間的成品
+            let bestProduct = null;
+            let bestDiff = Infinity;
+            products.forEach(p => {
+                const diff = Math.abs(new Date(c.created_at) - new Date(p.created_at));
+                if (diff < bestDiff) { bestDiff = diff; bestProduct = p; }
+            });
+            // 如果時間差在 10 分鐘內，歸屬到該成品
+            if (bestProduct && bestDiff < 600000) {
+                map[c.code] = bestProduct.code;
+                changed = true;
+            }
+        });
+    }
+
+    if (changed) saveBomParentMap(map);
+}
+
 function toggleGroup(key) {
     if (openGroups.has(key)) openGroups.delete(key);
     else openGroups.add(key);
@@ -1876,6 +1930,7 @@ if ('serviceWorker' in navigator) {
 (async function init() {
     try {
         await loadCodes();
+        autoDetectBomGroups();
         renderTable();
     } catch (e) {
         document.getElementById('loadingOverlay').textContent = '載入失敗：' + e.message;
