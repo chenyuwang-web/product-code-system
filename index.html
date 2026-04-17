@@ -111,6 +111,24 @@
         .select-all-wrap { display: flex; align-items: center; gap: 8px; }
         .row-checkbox { accent-color: #1a73e8; cursor: pointer; }
 
+        .bom-product-group { border: 1px solid #d2e3fc; border-radius: 10px; margin-bottom: 16px; overflow: hidden; }
+        .bom-product-header { background: linear-gradient(135deg, #e8f0fe, #d2e3fc); padding: 14px 18px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none; }
+        .bom-product-header:hover { background: linear-gradient(135deg, #d2e3fc, #bbdefb); }
+        .bom-product-header .product-info { display: flex; align-items: center; gap: 10px; }
+        .bom-product-header .product-code { font-family: Consolas, monospace; font-weight: 700; color: #1a73e8; font-size: 1rem; letter-spacing: 1px; }
+        .bom-product-header .product-desc { color: #444; font-size: 0.9rem; }
+        .bom-product-header .product-count { font-size: 0.8rem; color: #666; background: #fff; padding: 3px 10px; border-radius: 12px; }
+        .bom-product-body { display: none; padding: 0 12px 12px; }
+        .bom-product-body.open { display: block; }
+        .bom-sub-group { margin-left: 12px; margin-top: 8px; }
+        .bom-sub-label { font-size: 0.82rem; font-weight: 600; color: #555; margin-bottom: 4px; padding-left: 4px; border-left: 3px solid #1a73e8; }
+        .bom-sub-label.semi { border-left-color: #f9a825; }
+        .bom-sub-label.mat { border-left-color: #43a047; }
+        .unassigned-section { border-color: #e0e0e0; }
+        .unassigned-section .bom-product-header { background: #f5f5f5; }
+        .assign-parent-select { padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 0.78rem; max-width: 160px; }
+        .assign-btn { font-size: 0.78rem; color: #1a73e8; cursor: pointer; border: none; background: none; text-decoration: underline; }
+
         .stats { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
         .stat-item { background: #f5f5f5; padding: 10px 18px; border-radius: 8px; font-size: 0.85rem; color: #555; }
         .stat-item strong { color: #1a73e8; font-size: 1.1rem; }
@@ -414,6 +432,7 @@
                 <div class="list-opt-group">
                     <label class="opt-title">分組方式</label>
                     <select id="optGroupBy" onchange="renderTable()">
+                        <option value="bom">依成品 BOM 分類</option>
                         <option value="attr">依屬性（成品/半成品/物料）</option>
                         <option value="material">依物料類型</option>
                         <option value="source">依產品來源</option>
@@ -634,6 +653,17 @@ async function deleteCode(code) {
     if (!confirm(`確定要刪除編碼 ${code} 嗎？`)) return;
     try {
         await DB.remove(code);
+        // 清理 BOM 歸屬關係
+        const map = loadBomParentMap();
+        if (map[code]) {
+            // 如果是成品（parent），移除所有子項目的歸屬
+            if (map[code] === code) {
+                Object.keys(map).forEach(k => { if (map[k] === code) delete map[k]; });
+            }
+            delete map[code];
+            saveBomParentMap(map);
+        }
+        selectedCodes.delete(code);
         await loadCodes();
         renderTable();
     } catch (e) { showMsg('刪除失敗：' + (e.message || e), 'error'); }
@@ -643,6 +673,24 @@ const openGroups = new Set();
 let currentPage = 1;
 let editingCode = null; // 目前正在編輯的 code
 const selectedCodes = new Set(); // 勾選的 codes
+
+// === BOM 成品歸屬對照 ===
+function loadBomParentMap() {
+    try { return JSON.parse(localStorage.getItem('bomParentMap') || '{}'); } catch { return {}; }
+}
+function saveBomParentMap(map) {
+    localStorage.setItem('bomParentMap', JSON.stringify(map));
+}
+function assignParent(childCode, parentCode) {
+    const map = loadBomParentMap();
+    if (parentCode) map[childCode] = parentCode;
+    else delete map[childCode];
+    saveBomParentMap(map);
+    renderTable();
+}
+function removeFromBomGroup(childCode) {
+    assignParent(childCode, null);
+}
 
 function toggleGroup(key) {
     if (openGroups.has(key)) openGroups.delete(key);
@@ -765,6 +813,18 @@ async function saveEdit(origCode) {
             if (selectedCodes.has(origCode)) {
                 selectedCodes.delete(origCode);
                 selectedCodes.add(newCode);
+            }
+            // 更新 BOM 歸屬
+            const pMap = loadBomParentMap();
+            if (pMap[origCode]) {
+                const wasParent = pMap[origCode] === origCode;
+                if (wasParent) {
+                    // 成品編碼改了，更新所有子項目的 parent
+                    Object.keys(pMap).forEach(k => { if (pMap[k] === origCode) pMap[k] = newCode; });
+                }
+                pMap[newCode] = pMap[origCode] === origCode ? newCode : pMap[origCode];
+                delete pMap[origCode];
+                saveBomParentMap(pMap);
             }
             showMsg(`編碼已從 ${origCode} 更新為 ${newCode}`, 'success');
         } else {
@@ -889,8 +949,10 @@ function renderTable() {
 
     let html = '';
 
-    if (groupBy === 'none') {
-        // 不分組 — 使用分頁
+    if (groupBy === 'bom') {
+        // === 依成品 BOM 分類 ===
+        html = renderBomGrouped(sorted, cols, buildHeader, buildRow, renderItems);
+    } else if (groupBy === 'none') {
         let displayItems = sorted;
         let pagerHtml = '';
         if (pageSize > 0 && sorted.length > pageSize) {
@@ -901,7 +963,6 @@ function renderTable() {
         }
         html = renderItems(displayItems) + pagerHtml;
     } else {
-        // 分組模式
         let groupKeys, getKey;
         if (groupBy === 'attr') {
             groupKeys = ['成品', '半成品', '物料'];
@@ -967,6 +1028,127 @@ function renderTable() {
 
     document.getElementById('tableWrap').innerHTML = html;
     updateSelectedBtn();
+}
+
+// === 依成品 BOM 分類渲染 ===
+function renderBomGrouped(sorted, cols, buildHeader, buildRow, renderItems) {
+    const parentMap = loadBomParentMap();
+    const codeMap = {};
+    codesCache.forEach(c => codeMap[c.code] = c);
+
+    // 建立成品 → 子項目對照
+    const productGroups = {}; // parentCode → { semi: [], mat: [] }
+    const assigned = new Set();
+    const sortedCodes = new Set(sorted.map(c => c.code));
+
+    // 找出所有成品（在 parentMap 中指向自己的 or attr=成品）
+    const allProducts = codesCache.filter(c => c.attr === '成品');
+    const productCodes = new Set(allProducts.map(c => c.code));
+
+    // 依 parentMap 分類
+    sorted.forEach(c => {
+        const parent = parentMap[c.code];
+        if (parent && productCodes.has(parent)) {
+            if (!productGroups[parent]) productGroups[parent] = { product: codeMap[parent], semi: [], mat: [] };
+            if (c.code === parent) return; // 成品本身不重複加入
+            if (c.attr === '半成品') productGroups[parent].semi.push(c);
+            else productGroups[parent].mat.push(c);
+            assigned.add(c.code);
+        }
+    });
+
+    // 確保每個成品都有 group（即使沒有子項目）
+    allProducts.forEach(p => {
+        if (sortedCodes.has(p.code) && !productGroups[p.code]) {
+            productGroups[p.code] = { product: p, semi: [], mat: [] };
+        }
+    });
+
+    // 未歸類的項目
+    const unassigned = sorted.filter(c => !assigned.has(c.code) && c.attr !== '成品');
+
+    let html = '';
+
+    // 渲染每個成品群組
+    Object.keys(productGroups).forEach(pCode => {
+        const grp = productGroups[pCode];
+        const product = grp.product;
+        if (!product || !sortedCodes.has(product.code)) return;
+        const totalChildren = grp.semi.length + grp.mat.length;
+        const isOpen = openGroups.has('bom_' + pCode);
+        const desc = product.description || '';
+        const descShort = desc.length > 40 ? desc.substring(0, 40) + '...' : desc;
+
+        html += `<div class="bom-product-group">`;
+        html += `<div class="bom-product-header" onclick="toggleGroup('bom_${pCode}')">
+            <div class="product-info">
+                <span class="arrow" style="font-size:0.8rem;color:#888;transition:transform 0.2s;${isOpen ? 'transform:rotate(90deg);' : ''}">&#9654;</span>
+                <span class="product-code">${product.code}</span>
+                <span class="product-desc">${descShort}</span>
+            </div>
+            <span class="product-count">半成品 ${grp.semi.length} + 物料 ${grp.mat.length} = ${totalChildren} 筆</span>
+        </div>`;
+        html += `<div class="bom-product-body ${isOpen ? 'open' : ''}">`;
+
+        // 成品本身的資料列
+        html += `<div class="bom-sub-group"><div class="bom-sub-label">成品</div>${renderItems([product])}</div>`;
+
+        // 半成品
+        if (grp.semi.length > 0) {
+            html += `<div class="bom-sub-group"><div class="bom-sub-label semi">半成品（${grp.semi.length}）</div>${renderItems(grp.semi)}</div>`;
+        }
+        // 物料
+        if (grp.mat.length > 0) {
+            html += `<div class="bom-sub-group"><div class="bom-sub-label mat">物料（${grp.mat.length}）</div>${renderItems(grp.mat)}</div>`;
+        }
+
+        html += '</div></div>';
+    });
+
+    // 未歸類項目
+    if (unassigned.length > 0) {
+        const isOpen = openGroups.has('bom_unassigned');
+        html += `<div class="bom-product-group unassigned-section">`;
+        html += `<div class="bom-product-header" onclick="toggleGroup('bom_unassigned')">
+            <div class="product-info">
+                <span class="arrow" style="font-size:0.8rem;color:#888;transition:transform 0.2s;${isOpen ? 'transform:rotate(90deg);' : ''}">&#9654;</span>
+                <span style="font-weight:600;color:#888;">未歸類項目</span>
+            </div>
+            <span class="product-count">${unassigned.length} 筆</span>
+        </div>`;
+        html += `<div class="bom-product-body ${isOpen ? 'open' : ''}">`;
+        // 加上歸類按鈕的表格
+        html += renderUnassignedTable(unassigned, cols, buildHeader, buildRow);
+        html += '</div></div>';
+    }
+
+    return html;
+}
+
+function renderUnassignedTable(items, cols, buildHeader, buildRow) {
+    // 取得所有成品做為歸類選項
+    const products = codesCache.filter(c => c.attr === '成品');
+    let headerH = '<th class="select-all-wrap"><input type="checkbox" onchange="toggleSelectAll(this.checked)" title="全選"></th>';
+    headerH += '<th>編碼</th>';
+    if (cols.source) headerH += '<th>來源</th>';
+    if (cols.material) headerH += '<th>物料類型</th>';
+    if (cols.grade) headerH += '<th>品別</th>';
+    if (cols.desc) headerH += '<th>描述</th>';
+    if (cols.date) headerH += '<th>建立日期</th>';
+    headerH += '<th>操作</th><th>歸類至成品</th>';
+
+    let tbody = '';
+    items.forEach(c => {
+        const row = buildRow(c);
+        // 在 </tr> 前插入歸類下拉
+        const selectHtml = `<td><select class="assign-parent-select" onchange="assignParent('${c.code}', this.value)">
+            <option value="">-- 選擇成品 --</option>
+            ${products.map(p => `<option value="${p.code}">${p.code} ${(p.description||'').substring(0,20)}</option>`).join('')}
+        </select></td>`;
+        tbody += row.replace('</tr>', selectHtml + '</tr>');
+    });
+
+    return `<table><thead><tr>${headerH}</tr></thead><tbody>${tbody}</tbody></table>`;
 }
 
 function buildPager(page, totalPages, totalItems) {
@@ -1631,6 +1813,23 @@ async function confirmBom() {
 
     try {
         await DB.insert(records);
+
+        // 儲存 BOM 成品歸屬關係
+        const parentMap = loadBomParentMap();
+        // 找出成品（level 0）的編碼
+        const parentItem = bomItems.find(item => item.level !== undefined && String(item.level).trim() === '0' && item.generatedCode);
+        const parentCode = parentItem ? parentItem.generatedCode : null;
+        if (parentCode) {
+            toAdd.forEach(item => {
+                if (item.generatedCode && item.generatedCode !== parentCode) {
+                    parentMap[item.generatedCode] = parentCode;
+                }
+            });
+            // 成品本身也標記（作為 parent 識別用，指向自己）
+            parentMap[parentCode] = parentCode;
+            saveBomParentMap(parentMap);
+        }
+
         let msg = `成功匯入 ${records.length} 筆新編碼！`;
         if (skipDup) msg += `（${skipDup} 筆同料號已合併）`;
         if (skipExist) msg += `（${skipExist} 筆已存在已跳過）`;
