@@ -1256,25 +1256,44 @@ async function confirmBom() {
     const batchMat = document.getElementById('bomMaterial').value;
     const batchGrade = document.getElementById('bomGrade').value;
 
-    const records = toAdd.map(item => {
+    // 去重：相同編碼只保留第一筆，且排除資料庫已存在的編碼
+    const seenCodes = new Set();
+    const existingCodes = new Set(codesCache.map(c => c.code));
+    const records = [];
+    let skipDup = 0, skipExist = 0;
+
+    toAdd.forEach(item => {
+        const code = item.generatedCode;
+        if (existingCodes.has(code)) { skipExist++; return; }
+        if (seenCodes.has(code)) { skipDup++; return; }
+        seenCodes.add(code);
+
         const a = batchAttr || item.attr;
         const s = batchSource || item.source;
         const m = batchMat || item.material;
         const g = batchGrade || item.grade;
-        return {
-            code: item.generatedCode,
+        records.push({
+            code,
             attr: ATTR_LABEL[a],
             source: SOURCE_LABEL[s],
             material_code: m,
             material: MATERIAL_LABEL[m],
             grade: GRADE_LABEL[g],
             description: item.name
-        };
+        });
     });
+
+    if (!records.length) {
+        showMsg('所有編碼都已存在資料庫中，無需匯入', 'error', 'bomMsg');
+        return;
+    }
 
     try {
         await DB.insert(records);
-        showMsg(`成功編碼並匯入 ${records.length} 筆！`, 'success', 'bomMsg');
+        let msg = `成功匯入 ${records.length} 筆新編碼！`;
+        if (skipDup) msg += `（${skipDup} 筆同料號已合併）`;
+        if (skipExist) msg += `（${skipExist} 筆已存在已跳過）`;
+        showMsg(msg, 'success', 'bomMsg');
         await loadCodes();
         renderTable();
     } catch (e) { showMsg('匯入失敗：' + e.message, 'error', 'bomMsg'); }
