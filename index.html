@@ -81,6 +81,21 @@
         .search-bar input { flex: 1; padding: 10px 14px; border: 1.5px solid #ddd; border-radius: 8px; font-size: 0.95rem; }
         .search-bar input:focus { border-color: #1a73e8; outline: none; }
 
+        .list-options-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.85rem; color: #1a73e8; font-weight: 600; margin-bottom: 12px; user-select: none; }
+        .list-options-toggle:hover { color: #0d47a1; }
+        .list-options-toggle .arrow { transition: transform 0.2s; display: inline-block; font-size: 0.7rem; }
+        .list-options-toggle.open .arrow { transform: rotate(90deg); }
+        .list-options-panel { display: none; background: #f8f9fa; border: 1px solid #e0e0e0; border-radius: 10px; padding: 16px 20px; margin-bottom: 16px; }
+        .list-options-panel.open { display: block; }
+        .list-options-row { display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start; }
+        .list-opt-group { display: flex; flex-direction: column; gap: 6px; min-width: 140px; }
+        .list-opt-group label.opt-title { font-size: 0.8rem; color: #555; font-weight: 700; margin-bottom: 2px; }
+        .list-opt-group select { padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 0.85rem; background: #fff; }
+        .list-opt-group select:focus { border-color: #1a73e8; outline: none; }
+        .col-toggles { display: flex; gap: 10px; flex-wrap: wrap; }
+        .col-toggles label { font-size: 0.82rem; color: #444; display: flex; align-items: center; gap: 4px; cursor: pointer; }
+        .col-toggles input[type="checkbox"] { accent-color: #1a73e8; }
+
         .stats { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
         .stat-item { background: #f5f5f5; padding: 10px 18px; border-radius: 8px; font-size: 0.85rem; color: #555; }
         .stat-item strong { color: #1a73e8; font-size: 1.1rem; }
@@ -376,6 +391,50 @@
         <div class="search-bar">
             <input type="text" id="searchInput" placeholder="搜尋編碼或描述..." oninput="renderTable()">
         </div>
+        <div class="list-options-toggle" id="listOptToggle" onclick="toggleListOptions()">
+            <span class="arrow">&#9654;</span> ⚙ 清單顯示設定
+        </div>
+        <div class="list-options-panel" id="listOptPanel">
+            <div class="list-options-row">
+                <div class="list-opt-group">
+                    <label class="opt-title">分組方式</label>
+                    <select id="optGroupBy" onchange="renderTable()">
+                        <option value="attr">依屬性（成品/半成品/物料）</option>
+                        <option value="material">依物料類型</option>
+                        <option value="source">依產品來源</option>
+                        <option value="none">不分組（平面列表）</option>
+                    </select>
+                </div>
+                <div class="list-opt-group">
+                    <label class="opt-title">排序方式</label>
+                    <select id="optSortBy" onchange="renderTable()">
+                        <option value="newest">最新建立優先</option>
+                        <option value="oldest">最早建立優先</option>
+                        <option value="code_asc">編碼 A→Z</option>
+                        <option value="code_desc">編碼 Z→A</option>
+                    </select>
+                </div>
+                <div class="list-opt-group">
+                    <label class="opt-title">每頁筆數</label>
+                    <select id="optPageSize" onchange="currentPage=1;renderTable()">
+                        <option value="0">全部顯示</option>
+                        <option value="20">20 筆</option>
+                        <option value="50" selected>50 筆</option>
+                        <option value="100">100 筆</option>
+                    </select>
+                </div>
+                <div class="list-opt-group">
+                    <label class="opt-title">顯示欄位</label>
+                    <div class="col-toggles">
+                        <label><input type="checkbox" checked onchange="renderTable()" data-col="source"> 來源</label>
+                        <label><input type="checkbox" checked onchange="renderTable()" data-col="material"> 物料類型</label>
+                        <label><input type="checkbox" checked onchange="renderTable()" data-col="grade"> 品別</label>
+                        <label><input type="checkbox" checked onchange="renderTable()" data-col="desc"> 描述</label>
+                        <label><input type="checkbox" checked onchange="renderTable()" data-col="date"> 建立日期</label>
+                    </div>
+                </div>
+            </div>
+        </div>
         <div class="export-row">
             <button class="btn btn-secondary" onclick="exportCSV()">匯出 CSV</button>
         </div>
@@ -556,12 +615,30 @@ async function deleteCode(code) {
 }
 
 const openGroups = new Set();
+let currentPage = 1;
 
 function toggleGroup(key) {
     if (openGroups.has(key)) openGroups.delete(key);
     else openGroups.add(key);
     renderTable();
 }
+
+function toggleListOptions() {
+    const toggle = document.getElementById('listOptToggle');
+    const panel = document.getElementById('listOptPanel');
+    toggle.classList.toggle('open');
+    panel.classList.toggle('open');
+}
+
+function getVisibleCols() {
+    const cols = {};
+    document.querySelectorAll('.col-toggles input[data-col]').forEach(cb => {
+        cols[cb.dataset.col] = cb.checked;
+    });
+    return cols;
+}
+
+function goPage(p) { currentPage = p; renderTable(); }
 
 function renderTable() {
     const codes = codesCache;
@@ -582,67 +659,147 @@ function renderTable() {
         return;
     }
 
-    // 依屬性階層式分組：成品 → 半成品 → 物料
-    const levels = ['成品', '半成品', '物料'];
-    const groups = {};
-    filtered.forEach(c => {
-        const key = c.attr || '未分類';
-        if (!groups[key]) groups[key] = [];
-        groups[key].push(c);
-    });
+    // 讀取設定
+    const groupBy = document.getElementById('optGroupBy').value;
+    const sortBy = document.getElementById('optSortBy').value;
+    const pageSize = parseInt(document.getElementById('optPageSize').value) || 0;
+    const cols = getVisibleCols();
 
-    // 如果有搜尋，自動展開所有層級
-    if (query) { levels.forEach(k => openGroups.add(k)); }
+    // 排序
+    const sorted = filtered.slice();
+    if (sortBy === 'newest') sorted.reverse();
+    else if (sortBy === 'oldest') { /* already asc from DB */ }
+    else if (sortBy === 'code_asc') sorted.sort((a, b) => a.code.localeCompare(b.code));
+    else if (sortBy === 'code_desc') sorted.sort((a, b) => b.code.localeCompare(a.code));
+
+    // 欄位表頭
+    function buildHeader() {
+        let h = '<th>編碼</th>';
+        if (cols.source) h += '<th>來源</th>';
+        if (cols.material) h += '<th>物料類型</th>';
+        if (cols.grade) h += '<th>品別</th>';
+        if (cols.desc) h += '<th>描述</th>';
+        if (cols.date) h += '<th>建立日期</th>';
+        h += '<th></th>';
+        return h;
+    }
+
+    function buildRow(c) {
+        const date = c.created_at ? new Date(c.created_at).toLocaleDateString('zh-TW') : '-';
+        let h = `<td class="code-cell">${c.code}</td>`;
+        if (cols.source) h += `<td>${c.source || ''}</td>`;
+        if (cols.material) h += `<td>${c.material_code || ''} ${c.material || ''}</td>`;
+        if (cols.grade) h += `<td>${c.grade || ''}</td>`;
+        if (cols.desc) h += `<td>${c.description || '-'}</td>`;
+        if (cols.date) h += `<td>${date}</td>`;
+        h += `<td><button class="delete-btn" onclick="deleteCode('${c.code}')">刪除</button></td>`;
+        return `<tr>${h}</tr>`;
+    }
+
+    function renderItems(items) {
+        return `<table><thead><tr>${buildHeader()}</tr></thead><tbody>${items.map(buildRow).join('')}</tbody></table>`;
+    }
 
     let html = '';
 
-    function renderItems(items) {
-        let h = `<table><thead><tr>
-            <th>編碼</th><th>來源</th><th>物料類型</th><th>品別</th><th>描述</th><th>建立日期</th><th></th>
-        </tr></thead><tbody>`;
-        items.slice().reverse().forEach(c => {
-            const date = c.created_at ? new Date(c.created_at).toLocaleDateString('zh-TW') : '-';
-            h += `<tr>
-                <td class="code-cell">${c.code}</td>
-                <td>${c.source || ''}</td><td>${c.material_code || ''} ${c.material || ''}</td><td>${c.grade || ''}</td>
-                <td>${c.description || '-'}</td><td>${date}</td>
-                <td><button class="delete-btn" onclick="deleteCode('${c.code}')">刪除</button></td>
-            </tr>`;
+    if (groupBy === 'none') {
+        // 不分組 — 使用分頁
+        let displayItems = sorted;
+        let pagerHtml = '';
+        if (pageSize > 0 && sorted.length > pageSize) {
+            const totalPages = Math.ceil(sorted.length / pageSize);
+            if (currentPage > totalPages) currentPage = totalPages;
+            displayItems = sorted.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+            pagerHtml = buildPager(currentPage, totalPages, sorted.length);
+        }
+        html = renderItems(displayItems) + pagerHtml;
+    } else {
+        // 分組模式
+        let groupKeys, getKey;
+        if (groupBy === 'attr') {
+            groupKeys = ['成品', '半成品', '物料'];
+            getKey = c => c.attr || '未分類';
+        } else if (groupBy === 'material') {
+            const allMats = [...new Set(sorted.map(c => c.material_code || '未分類'))].sort();
+            groupKeys = allMats;
+            getKey = c => c.material_code || '未分類';
+        } else if (groupBy === 'source') {
+            const srcMap = { '自製產品': '自製產品', '客供產品': '客供產品', '外購': '外購' };
+            const allSrcs = [...new Set(sorted.map(c => c.source || '未分類'))];
+            groupKeys = allSrcs;
+            getKey = c => c.source || '未分類';
+        }
+
+        const groups = {};
+        sorted.forEach(c => {
+            const key = getKey(c);
+            if (!groups[key]) groups[key] = [];
+            groups[key].push(c);
         });
-        return h + '</tbody></table>';
-    }
 
-    // 由最內層往外包：物料 → 半成品 → 成品
-    for (let i = levels.length - 1; i >= 0; i--) {
-        const key = levels[i];
-        const items = groups[key] || [];
-        if (items.length === 0 && !html) continue;
+        if (query) { groupKeys.forEach(k => openGroups.add(k)); }
 
-        const isOpen = openGroups.has(key);
-        const indent = i * 20;
-        let block = `<div style="margin-left:${indent}px;">`;
-        block += `<div class="group-header ${isOpen ? 'open' : ''}" onclick="toggleGroup('${key}')">
-            <span class="group-title"><span class="arrow">&#9654;</span>&nbsp; ${key}</span>
-            <span class="group-count">${items.length} 筆</span>
-        </div>`;
-        block += `<div class="group-body ${isOpen ? 'open' : ''}" style="margin-left:8px;">`;
-        if (items.length > 0) block += renderItems(items);
-        block += html;
-        block += '</div></div>';
-        html = block;
-    }
-
-    // 處理未分類
-    if (groups['未分類']) {
-        const isOpen = openGroups.has('未分類');
-        html += `<div class="group-header ${isOpen ? 'open' : ''}" onclick="toggleGroup('未分類')">
-            <span class="group-title"><span class="arrow">&#9654;</span>&nbsp; 未分類</span>
-            <span class="group-count">${groups['未分類'].length} 筆</span>
-        </div>`;
-        html += `<div class="group-body ${isOpen ? 'open' : ''}">${renderItems(groups['未分類'])}</div>`;
+        if (groupBy === 'attr') {
+            // 階層式呈現（成品 > 半成品 > 物料）
+            for (let i = groupKeys.length - 1; i >= 0; i--) {
+                const key = groupKeys[i];
+                const items = groups[key] || [];
+                if (items.length === 0 && !html) continue;
+                const isOpen = openGroups.has(key);
+                const indent = i * 20;
+                let block = `<div style="margin-left:${indent}px;">`;
+                block += `<div class="group-header ${isOpen ? 'open' : ''}" onclick="toggleGroup('${key}')">
+                    <span class="group-title"><span class="arrow">&#9654;</span>&nbsp; ${key}</span>
+                    <span class="group-count">${items.length} 筆</span>
+                </div>`;
+                block += `<div class="group-body ${isOpen ? 'open' : ''}" style="margin-left:8px;">`;
+                if (items.length > 0) block += renderItems(items);
+                block += html;
+                block += '</div></div>';
+                html = block;
+            }
+            // 處理未分類
+            if (groups['未分類']) {
+                const isOpen = openGroups.has('未分類');
+                html += `<div class="group-header ${isOpen ? 'open' : ''}" onclick="toggleGroup('未分類')">
+                    <span class="group-title"><span class="arrow">&#9654;</span>&nbsp; 未分類</span>
+                    <span class="group-count">${groups['未分類'].length} 筆</span>
+                </div>`;
+                html += `<div class="group-body ${isOpen ? 'open' : ''}">${renderItems(groups['未分類'])}</div>`;
+            }
+        } else {
+            // 平面分組（物料類型 / 產品來源）
+            groupKeys.forEach(key => {
+                const items = groups[key] || [];
+                if (items.length === 0) return;
+                const isOpen = openGroups.has(key);
+                html += `<div class="group-header ${isOpen ? 'open' : ''}" onclick="toggleGroup('${key.replace(/'/g, "\\'")}')">
+                    <span class="group-title"><span class="arrow">&#9654;</span>&nbsp; ${key}</span>
+                    <span class="group-count">${items.length} 筆</span>
+                </div>`;
+                html += `<div class="group-body ${isOpen ? 'open' : ''}">${renderItems(items)}</div>`;
+            });
+        }
     }
 
     document.getElementById('tableWrap').innerHTML = html;
+}
+
+function buildPager(page, totalPages, totalItems) {
+    let h = '<div style="display:flex;justify-content:center;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap;">';
+    h += `<span style="font-size:0.82rem;color:#888;">共 ${totalItems} 筆，第 ${page}/${totalPages} 頁</span>`;
+    h += `<button class="btn btn-secondary" style="padding:6px 14px;font-size:0.82rem;" onclick="goPage(1)" ${page<=1?'disabled':''}>首頁</button>`;
+    h += `<button class="btn btn-secondary" style="padding:6px 14px;font-size:0.82rem;" onclick="goPage(${page-1})" ${page<=1?'disabled':''}>上一頁</button>`;
+    // show nearby pages
+    const start = Math.max(1, page - 2), end = Math.min(totalPages, page + 2);
+    for (let i = start; i <= end; i++) {
+        if (i === page) h += `<button class="btn btn-primary" style="padding:6px 12px;font-size:0.82rem;">${i}</button>`;
+        else h += `<button class="btn btn-secondary" style="padding:6px 12px;font-size:0.82rem;" onclick="goPage(${i})">${i}</button>`;
+    }
+    h += `<button class="btn btn-secondary" style="padding:6px 14px;font-size:0.82rem;" onclick="goPage(${page+1})" ${page>=totalPages?'disabled':''}>下一頁</button>`;
+    h += `<button class="btn btn-secondary" style="padding:6px 14px;font-size:0.82rem;" onclick="goPage(${totalPages})" ${page>=totalPages?'disabled':''}>末頁</button>`;
+    h += '</div>';
+    return h;
 }
 
 function exportCSV() {
