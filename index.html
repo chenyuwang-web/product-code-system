@@ -899,6 +899,42 @@ async function saveEdit(origCode) {
     }
 }
 
+// === 即時衝突偵測 ===
+function checkConflict(inputEl, origCode) {
+    const val = inputEl.value.trim().toUpperCase();
+    const hint = document.getElementById('conflictHint_' + origCode);
+    if (!hint) return;
+
+    if (!val) {
+        hint.textContent = '';
+        return;
+    }
+    if (val.length !== 10) {
+        hint.textContent = '⚠ 需為 10 碼';
+        hint.style.color = '#e65100';
+        return;
+    }
+    if (!/^[A-Z]\d[A-Z]{3}[A-Z]\d{4}$/.test(val)) {
+        hint.textContent = '⚠ 格式不符';
+        hint.style.color = '#e65100';
+        return;
+    }
+    if (val === origCode) {
+        hint.textContent = '';
+        return;
+    }
+    // 檢查是否與其他編碼衝突
+    const conflict = codesCache.find(c => c.code === val);
+    if (conflict) {
+        const desc = conflict.description ? conflict.description.substring(0, 25) : '';
+        hint.innerHTML = `⛔ 已存在：${conflict.attr}<br><span style="color:#c62828;font-size:0.75rem;">${desc}</span>`;
+        hint.style.color = '#c62828';
+    } else {
+        hint.textContent = '✓ 可使用';
+        hint.style.color = '#2e7d32';
+    }
+}
+
 // === 建立來源 select ===
 function buildSourceSelect(current) {
     const opts = [['自製產品','自製產品'],['客供產品','客供產品'],['外購','外購']];
@@ -966,7 +1002,7 @@ function renderTable() {
         if (cols.grade) h += '<th>品別</th>';
         if (cols.desc) h += '<th>描述</th>';
         if (cols.date) h += '<th>建立日期</th>';
-        h += '<th>操作</th>';
+        h += '<th></th>';
         return h;
     }
 
@@ -978,21 +1014,34 @@ function renderTable() {
         let h = `<td><input type="checkbox" class="row-checkbox" data-code="${c.code}" ${checked} onchange="toggleSelect('${c.code}')"></td>`;
 
         if (isEditing) {
-            h += `<td><input class="edit-input" data-field="code" value="${c.code}" style="font-family:Consolas,monospace;font-weight:600;letter-spacing:1px;width:110px;color:#1a73e8;" maxlength="10"></td>`;
+            // 編碼欄：input + 即時衝突提示 + 儲存/取消
+            h += `<td style="min-width:200px;">
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                    <input class="edit-input" id="codeInput_${c.code}" data-field="code" value="${c.code}"
+                        style="font-family:Consolas,monospace;font-weight:600;letter-spacing:1px;width:110px;color:#1a73e8;"
+                        maxlength="10" oninput="checkConflict(this,'${c.code}')">
+                    <span id="conflictHint_${c.code}" style="font-size:0.78rem;"></span>
+                </div>
+                <div style="display:flex;gap:6px;margin-top:5px;">
+                    <button class="save-btn" onclick="saveEdit('${c.code}')">✓ 儲存</button>
+                    <button class="cancel-btn" onclick="cancelEdit()">✕ 取消</button>
+                </div>
+            </td>`;
             if (cols.source) h += `<td>${buildSourceSelect(c.source || '')}</td>`;
             if (cols.material) h += `<td>${buildMaterialSelect(c.material_code || '')}</td>`;
             if (cols.grade) h += `<td>${buildGradeSelect(c.grade || '')}</td>`;
-            if (cols.desc) h += `<td><input class="edit-input" data-field="desc" value="${(c.description || '').replace(/"/g,'&quot;')}"></td>`;
+            if (cols.desc) h += `<td><input class="edit-input" data-field="desc" value="${(c.description || '').replace(/"/g,'&quot;')}" style="min-width:120px;"></td>`;
             if (cols.date) h += `<td>${date}</td>`;
-            h += `<td class="action-btns"><button class="save-btn" onclick="saveEdit('${c.code}')">儲存</button><button class="cancel-btn" onclick="cancelEdit()">取消</button></td>`;
+            h += `<td></td>`;
         } else {
-            h += `<td class="code-cell">${c.code}</td>`;
+            // 點擊編碼文字直接進入編輯
+            h += `<td class="code-cell" title="點擊編輯" onclick="editCode('${c.code}')" style="cursor:pointer;text-decoration:underline dotted;">${c.code}</td>`;
             if (cols.source) h += `<td>${c.source || ''}</td>`;
             if (cols.material) h += `<td>${c.material_code || ''} ${c.material || ''}</td>`;
             if (cols.grade) h += `<td>${c.grade || ''}</td>`;
             if (cols.desc) h += `<td>${c.description || '-'}</td>`;
             if (cols.date) h += `<td>${date}</td>`;
-            h += `<td class="action-btns"><button class="edit-btn" onclick="editCode('${c.code}')">編輯</button><button class="delete-btn" onclick="deleteCode('${c.code}')">刪除</button></td>`;
+            h += `<td><button class="delete-btn" onclick="deleteCode('${c.code}')">刪除</button></td>`;
         }
         return `<tr data-code="${c.code}">${h}</tr>`;
     }
