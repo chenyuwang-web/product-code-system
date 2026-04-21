@@ -826,12 +826,14 @@ async function saveEdit(origCode) {
     const matEl = row.querySelector('[data-field="material"]');
     const gradeEl = row.querySelector('[data-field="grade"]');
     const descEl = row.querySelector('[data-field="desc"]');
+    const parentEl = row.querySelector('[data-field="parent"]');
 
     const newCode = codeEl ? codeEl.value.trim().toUpperCase() : origCode;
     const newSource = sourceEl ? sourceEl.value : undefined;
     const newMatCode = matEl ? matEl.value : undefined;
     const newGrade = gradeEl ? gradeEl.value : undefined;
     const newDesc = descEl ? descEl.value.trim() : undefined;
+    const newParent = parentEl ? parentEl.value : undefined; // '' = 移出未歸類, 'A1XXXX' = 歸屬成品
 
     // 驗證新編碼格式
     if (newCode && newCode !== origCode) {
@@ -891,6 +893,23 @@ async function saveEdit(origCode) {
             await DB.update(origCode, fields);
             showMsg(`編碼 ${origCode} 已更新`, 'success');
         }
+
+        // 更新 BOM 所屬成品
+        if (newParent !== undefined) {
+            const finalCode = (newCode && newCode !== origCode) ? newCode : origCode;
+            const pMap = loadBomParentMap();
+            if (newParent === '') {
+                // 移出：刪除歸屬
+                delete pMap[finalCode];
+            } else {
+                // 設定歸屬
+                pMap[finalCode] = newParent;
+                // 確保新 parent 的成品自身也標記
+                if (!pMap[newParent]) pMap[newParent] = newParent;
+            }
+            saveBomParentMap(pMap);
+        }
+
         editingCode = null;
         await loadCodes();
         renderTable();
@@ -1014,15 +1033,28 @@ function renderTable() {
         let h = `<td><input type="checkbox" class="row-checkbox" data-code="${c.code}" ${checked} onchange="toggleSelect('${c.code}')"></td>`;
 
         if (isEditing) {
-            // 編碼欄：input + 即時衝突提示 + 儲存/取消
-            h += `<td style="min-width:200px;">
+            // 取得現有歸屬成品
+            const pMap = loadBomParentMap();
+            const curParent = pMap[c.code] && pMap[c.code] !== c.code ? pMap[c.code] : '';
+            const products = codesCache.filter(p => p.attr === '成品' && p.code !== c.code);
+            const parentOpts = `<option value="">── 移出（未歸類）</option>` +
+                products.map(p => `<option value="${p.code}" ${curParent===p.code?'selected':''}>${p.code}${p.description ? ' · ' + p.description.substring(0,18) : ''}</option>`).join('');
+
+            // 編碼欄：input + 即時衝突提示 + 所屬成品 + 儲存/取消
+            h += `<td style="min-width:220px;">
                 <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
                     <input class="edit-input" id="codeInput_${c.code}" data-field="code" value="${c.code}"
                         style="font-family:Consolas,monospace;font-weight:600;letter-spacing:1px;width:110px;color:#1a73e8;"
                         maxlength="10" oninput="checkConflict(this,'${c.code}')">
                     <span id="conflictHint_${c.code}" style="font-size:0.78rem;"></span>
                 </div>
-                <div style="display:flex;gap:6px;margin-top:5px;">
+                <div style="margin-top:5px;">
+                    <label style="font-size:0.75rem;color:#666;display:block;margin-bottom:2px;">所屬成品</label>
+                    <select data-field="parent" style="padding:4px 6px;border:1px solid #ddd;border-radius:5px;font-size:0.8rem;width:100%;max-width:220px;">
+                        ${parentOpts}
+                    </select>
+                </div>
+                <div style="display:flex;gap:6px;margin-top:6px;">
                     <button class="save-btn" onclick="saveEdit('${c.code}')">✓ 儲存</button>
                     <button class="cancel-btn" onclick="cancelEdit()">✕ 取消</button>
                 </div>
