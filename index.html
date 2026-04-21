@@ -129,6 +129,15 @@
         .assign-parent-select { padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 0.78rem; max-width: 160px; }
         .assign-btn { font-size: 0.78rem; color: #1a73e8; cursor: pointer; border: none; background: none; text-decoration: underline; }
 
+        .bulk-action-bar { display: none; align-items: center; gap: 10px; flex-wrap: wrap; background: #e8f0fe; border: 1px solid #c5d8fb; border-radius: 8px; padding: 10px 16px; margin-bottom: 12px; }
+        .bulk-action-bar.show { display: flex; }
+        .bulk-action-bar .bulk-label { font-size: 0.88rem; font-weight: 600; color: #1a73e8; white-space: nowrap; }
+        .bulk-action-bar select { padding: 6px 10px; border: 1px solid #aac4f5; border-radius: 6px; font-size: 0.85rem; background: #fff; }
+        .bulk-confirm-btn { padding: 7px 18px; background: #1a73e8; color: #fff; border: none; border-radius: 6px; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+        .bulk-confirm-btn:hover { background: #1558b0; }
+        .bulk-cancel-btn { padding: 7px 14px; background: #fff; color: #555; border: 1px solid #ccc; border-radius: 6px; font-size: 0.85rem; cursor: pointer; }
+        .bulk-cancel-btn:hover { background: #f5f5f5; }
+
         .stats { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
         .stat-item { background: #f5f5f5; padding: 10px 18px; border-radius: 8px; font-size: 0.85rem; color: #555; }
         .stat-item strong { color: #1a73e8; font-size: 1.1rem; }
@@ -469,6 +478,16 @@
                 </div>
             </div>
         </div>
+        <!-- 批次操作列：有勾選時顯示 -->
+        <div class="bulk-action-bar" id="bulkActionBar">
+            <span class="bulk-label" id="bulkActionLabel">已選 0 筆</span>
+            <span style="font-size:0.85rem;color:#555;">更換歸屬至成品：</span>
+            <select id="bulkParentSelect">
+                <option value="">── 移出（未歸類）</option>
+            </select>
+            <button class="bulk-confirm-btn" onclick="bulkReassign()">確認更換</button>
+            <button class="bulk-cancel-btn" onclick="clearSelection()">取消選取</button>
+        </div>
         <div class="export-row">
             <button class="btn btn-secondary" onclick="exportCSV()">匯出全部 CSV</button>
             <button class="export-selected-btn" id="exportSelectedBtn" onclick="exportSelectedCSV()" disabled>匯出已勾選 (0)</button>
@@ -788,10 +807,66 @@ function toggleSelectAll(checked) {
 }
 
 function updateSelectedBtn() {
-    const btn = document.getElementById('exportSelectedBtn');
     const n = selectedCodes.size;
+
+    // 匯出按鈕
+    const btn = document.getElementById('exportSelectedBtn');
     btn.textContent = `匯出已勾選 (${n})`;
     btn.disabled = n === 0;
+
+    // 批次操作列
+    const bar = document.getElementById('bulkActionBar');
+    const label = document.getElementById('bulkActionLabel');
+    if (n > 0) {
+        bar.classList.add('show');
+        label.textContent = `已選 ${n} 筆`;
+        // 更新成品選項（排除選中項目本身是成品的情況）
+        const select = document.getElementById('bulkParentSelect');
+        const products = codesCache.filter(c => c.attr === '成品');
+        const currentVal = select.value;
+        select.innerHTML = '<option value="">── 移出（未歸類）</option>' +
+            products.map(p => `<option value="${p.code}" ${currentVal===p.code?'selected':''}>${p.code} · ${(p.description||'').substring(0,25)}</option>`).join('');
+    } else {
+        bar.classList.remove('show');
+    }
+}
+
+function clearSelection() {
+    selectedCodes.clear();
+    document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
+    updateSelectedBtn();
+}
+
+function bulkReassign() {
+    const targetParent = document.getElementById('bulkParentSelect').value;
+    if (selectedCodes.size === 0) return;
+
+    // 確認排除成品本身（成品不應被改歸屬）
+    const products = new Set(codesCache.filter(c => c.attr === '成品').map(c => c.code));
+    const toMove = [...selectedCodes].filter(code => !products.has(code));
+
+    if (toMove.length === 0) {
+        showMsg('勾選的都是成品，無法更換歸屬', 'error');
+        return;
+    }
+
+    const label = targetParent
+        ? `歸入 ${targetParent}` : '移出至未歸類';
+    if (!confirm(`確定將 ${toMove.length} 筆品項${label}？`)) return;
+
+    const pMap = loadBomParentMap();
+    toMove.forEach(code => {
+        if (targetParent) {
+            pMap[code] = targetParent;
+            if (!pMap[targetParent]) pMap[targetParent] = targetParent;
+        } else {
+            delete pMap[code];
+        }
+    });
+    saveBomParentMap(pMap);
+    clearSelection();
+    renderTable();
+    showMsg(`已將 ${toMove.length} 筆品項${label}`, 'success');
 }
 
 function exportSelectedCSV() {
