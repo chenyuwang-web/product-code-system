@@ -54,6 +54,7 @@
         .msg { padding: 12px 16px; border-radius: 8px; margin-top: 14px; font-size: 0.9rem; display: none; }
         .msg-success { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
         .msg-error { background: #ffebee; color: #c62828; border: 1px solid #ef9a9a; }
+        .msg-info { background: #e8f0fe; color: #1a73e8; border: 1px solid #aac4f5; }
 
         table { width: 100%; border-collapse: collapse; margin-top: 10px; }
         th { background: #f5f5f5; padding: 10px 14px; text-align: left; font-size: 0.85rem; color: #555; border-bottom: 2px solid #ddd; }
@@ -493,6 +494,7 @@
             <button class="btn btn-secondary" onclick="exportCSV()">匯出全部 CSV</button>
             <button class="export-selected-btn" id="exportSelectedBtn" onclick="exportSelectedCSV()" disabled>匯出已勾選 (0)</button>
         </div>
+        <div id="listMsg" class="msg" style="margin-bottom:10px;"></div>
         <div id="tableWrap"></div>
     </div>
 </div>
@@ -670,13 +672,13 @@ function resetForm() {
 }
 
 async function deleteCode(code) {
-    if (!confirm(`確定要刪除編碼 ${code} 嗎？`)) return;
+    if (!confirm(`確定要從資料庫刪除編碼 ${code} 嗎？\n此操作無法復原。`)) return;
+    showListMsg(`正在刪除 ${code}…`, 'info');
     try {
         await DB.remove(code);
         // 清理 BOM 歸屬關係
         const map = loadBomParentMap();
         if (map[code]) {
-            // 如果是成品（parent），移除所有子項目的歸屬
             if (map[code] === code) {
                 Object.keys(map).forEach(k => { if (map[k] === code) delete map[k]; });
             }
@@ -686,7 +688,22 @@ async function deleteCode(code) {
         selectedCodes.delete(code);
         await loadCodes();
         renderTable();
-    } catch (e) { showMsg('刪除失敗：' + (e.message || e), 'error'); }
+        showListMsg(`✓ 編碼 ${code} 已從資料庫刪除`, 'success');
+    } catch (e) {
+        showListMsg(`✗ 刪除失敗：${e.message || e}`, 'error');
+    }
+}
+
+function showListMsg(text, type) {
+    const el = document.getElementById('listMsg');
+    if (!el) return;
+    el.textContent = text;
+    el.className = 'msg ' + (type === 'success' ? 'msg-success' : type === 'error' ? 'msg-error' : 'msg-info');
+    el.style.display = 'block';
+    if (type !== 'error') {
+        clearTimeout(el._timer);
+        el._timer = setTimeout(() => { el.style.display = 'none'; }, 4000);
+    }
 }
 
 const openGroups = new Set();
@@ -1380,13 +1397,13 @@ function buildPager(page, totalPages, totalItems) {
 }
 
 async function refreshCodes() {
+    showListMsg('正在從資料庫重新整理…', 'info');
     try {
-        showMsg('正在重新整理…', 'success');
         await loadCodes();
         renderTable();
-        showMsg('資料已更新', 'success');
+        showListMsg(`✓ 已更新，共 ${codesCache.length} 筆`, 'success');
     } catch (e) {
-        showMsg('重新整理失敗：' + e.message, 'error');
+        showListMsg('✗ 重新整理失敗：' + e.message, 'error');
     }
 }
 
