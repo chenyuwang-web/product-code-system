@@ -498,6 +498,7 @@
         </div>
         <div class="export-row">
             <button class="btn btn-secondary" onclick="refreshCodes()" title="重新從資料庫載入">🔄 重新整理</button>
+            <button class="btn btn-secondary" onclick="redetectGroups()" title="清除舊歸屬，重新依時間偵測">🔍 重新偵測歸屬</button>
             <button class="btn btn-secondary" onclick="exportCSV()">匯出全部 CSV</button>
             <button class="export-selected-btn" id="exportSelectedBtn" onclick="exportSelectedCSV()" disabled>匯出已勾選 (0)</button>
         </div>
@@ -779,8 +780,8 @@ function autoDetectBomGroups() {
                 const diff = Math.abs(new Date(c.created_at) - new Date(p.created_at));
                 if (diff < bestDiff) { bestDiff = diff; bestProduct = p; }
             });
-            // 如果時間差在 10 分鐘內，歸屬到該成品
-            if (bestProduct && bestDiff < 600000) {
+            // 如果時間差在 60 分鐘內，歸屬到最近的成品
+            if (bestProduct && bestDiff < 3600000) {
                 map[c.code] = bestProduct.code;
                 changed = true;
             }
@@ -1449,6 +1450,16 @@ function buildPager(page, totalPages, totalItems) {
     return h;
 }
 
+async function redetectGroups() {
+    if (!confirm('將清除目前所有手動設定的歸屬，重新依匯入時間自動偵測。確定嗎？')) return;
+    saveBomParentMap({}); // 清空
+    autoDetectBomGroups();
+    const map = loadBomParentMap();
+    const assigned = codesCache.filter(c => map[c.code]).length;
+    renderTable();
+    showListMsg(`✓ 重新偵測完成，已歸屬 ${assigned} 筆，未歸類 ${codesCache.length - assigned} 筆`, 'success');
+}
+
 async function refreshCodes() {
     showListMsg('正在從資料庫重新整理…', 'info');
     try {
@@ -2112,7 +2123,15 @@ async function confirmBom() {
         // 儲存 BOM 成品歸屬關係
         const parentMap = loadBomParentMap();
         // 找出成品（level 0）的編碼
-        const parentItem = bomItems.find(item => item.level !== undefined && String(item.level).trim() === '0' && item.generatedCode);
+        // 找成品 parent：優先抓 level=0，找不到則用批次中唯一一筆 attr=成品 的項目
+        let parentItem = bomItems.find(item => item.level !== undefined && String(item.level).trim() === '0' && item.generatedCode);
+        if (!parentItem) {
+            const productItems = toAdd.filter(item => {
+                const a = document.getElementById('bomAttr').value || item.attr;
+                return a === 'A'; // 屬性 A = 成品
+            });
+            if (productItems.length === 1) parentItem = productItems[0];
+        }
         const parentCode = parentItem ? parentItem.generatedCode : null;
         if (parentCode) {
             toAdd.forEach(item => {
