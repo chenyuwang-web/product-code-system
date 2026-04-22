@@ -501,6 +501,8 @@
             <button class="btn btn-secondary" onclick="redetectGroups()" title="清除舊歸屬，重新依時間偵測">🔍 重新偵測歸屬</button>
             <button class="btn btn-secondary" onclick="exportCSV()">匯出全部 CSV</button>
             <button class="export-selected-btn" id="exportSelectedBtn" onclick="exportSelectedCSV()" disabled>匯出已勾選 (0)</button>
+            <button class="btn btn-secondary" onclick="openTrash()" title="查看已刪除的編碼">🗑 回收桶</button>
+            <button class="btn btn-secondary" onclick="openLogs()" title="查看操作日誌">📋 操作日誌</button>
         </div>
         <div id="listMsg" class="msg" style="margin-bottom:10px;"></div>
         <div id="tableWrap"></div>
@@ -514,11 +516,14 @@ const SUPABASE_URL = 'https://plsmpjrshznlmiooqlpq.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_s5UF9Ea96F1KK7B8BAa2Kw_8bMdAG8B';
 const TABLE = 'product_codes';
 
+const _H = () => ({ 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` });
+const _HJ = () => ({ ..._H(), 'Content-Type': 'application/json' });
+
 const DB = {
-    async select() {
-        const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?select=*&order=created_at.asc`, {
-            headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-        });
+    // 預設只回傳未刪除
+    async select(opts = {}) {
+        const deleted = opts.deleted ? 'true' : 'false';
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?select=*&is_deleted=eq.${deleted}&order=created_at.asc`, { headers: _H() });
         if (!res.ok) throw new Error(await res.text());
         return res.json();
     },
@@ -526,29 +531,85 @@ const DB = {
         const body = Array.isArray(rows) ? rows : [rows];
         const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}`, {
             method: 'POST',
-            headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'resolution=ignore-duplicates,return=representation' },
+            headers: { ..._HJ(), 'Prefer': 'resolution=ignore-duplicates,return=representation' },
             body: JSON.stringify(body)
         });
         if (!res.ok) throw new Error(await res.text());
-        return res.json();
+        const inserted = await res.json();
+        inserted.forEach(r => Logger.log('insert', r.code, { row: r }));
+        return inserted;
     },
     async update(code, fields) {
+        const before = codesCache.find(r => r.code === code);
         const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?code=eq.${encodeURIComponent(code)}`, {
             method: 'PATCH',
-            headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+            headers: { ..._HJ(), 'Prefer': 'return=representation' },
             body: JSON.stringify(fields)
         });
         if (!res.ok) throw new Error(await res.text());
-        return res.json();
+        const after = await res.json();
+        Logger.log('update', code, { before, after: after[0], changed: fields });
+        return after;
     },
-    async remove(code) {
+    // 軟刪除：預設做 UPDATE is_deleted=true，硬刪除需 opts.hard
+    async remove(code, opts = {}) {
+        if (opts.hard) {
+            const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?code=eq.${encodeURIComponent(code)}`, {
+                method: 'DELETE', headers: _H()
+            });
+            if (!res.ok) throw new Error(await res.text());
+            Logger.log('hard_delete', code, {});
+            return;
+        }
+        const before = codesCache.find(r => r.code === code);
         const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?code=eq.${encodeURIComponent(code)}`, {
-            method: 'DELETE',
-            headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+            method: 'PATCH',
+            headers: { ..._HJ(), 'Prefer': 'return=representation' },
+            body: JSON.stringify({ is_deleted: true, deleted_at: new Date().toISOString() })
         });
         if (!res.ok) throw new Error(await res.text());
+        Logger.log('delete', code, { before });
+    },
+    async restore(code) {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?code=eq.${encodeURIComponent(code)}`, {
+            method: 'PATCH',
+            headers: { ..._HJ(), 'Prefer': 'return=representation' },
+            body: JSON.stringify({ is_deleted: false, deleted_at: null })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        Logger.log('restore', code, {});
+    },
+    async setStatus(code, status) {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?code=eq.${encodeURIComponent(code)}`, {
+            method: 'PATCH',
+            headers: { ..._HJ(), 'Prefer': 'return=representation' },
+            body: JSON.stringify({ status })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        Logger.log('status', code, { status });
+    },
+    async logs(limit = 200) {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/operation_logs?select=*&order=created_at.desc&limit=${limit}`, { headers: _H() });
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
     }
 };
+
+// === 操作日誌（非阻塞） ===
+const Logger = {
+    log(action, code, detail) {
+        // fire-and-forget；日誌失敗不應阻擋主流程
+        try {
+            fetch(`${SUPABASE_URL}/rest/v1/operation_logs`, {
+                method: 'POST',
+                headers: { ..._HJ(), 'Prefer': 'return=minimal' },
+                body: JSON.stringify({ action, code: code || null, detail: detail || {} })
+            }).catch(() => {});
+        } catch {}
+    }
+};
+
+const VALID_STATUS = ['啟用', '草稿', '停用', '淘汰'];
 
 // === 本地快取 ===
 let codesCache = [];
@@ -680,7 +741,7 @@ function resetForm() {
 }
 
 async function deleteCode(code) {
-    if (!confirm(`確定要從資料庫刪除編碼 ${code} 嗎？\n此操作無法復原。`)) return;
+    if (!confirm(`確定要刪除編碼 ${code} 嗎？\n（會移入回收桶，可從「🗑 回收桶」還原）`)) return;
     showListMsg(`正在刪除 ${code}…`, 'info');
     try {
         await DB.remove(code);
@@ -1162,6 +1223,7 @@ function renderTable() {
         if (cols.grade) h += '<th>品別</th>';
         if (cols.desc) h += '<th>描述</th>';
         if (cols.date) h += '<th>建立日期</th>';
+        h += '<th>狀態</th>';
         h += '<th></th>';
         return h;
     }
@@ -1205,6 +1267,7 @@ function renderTable() {
             if (cols.grade) h += `<td>${buildGradeSelect(c.grade || '')}</td>`;
             if (cols.desc) h += `<td><input class="edit-input" data-field="desc" value="${(c.description || '').replace(/"/g,'&quot;')}" style="min-width:120px;"></td>`;
             if (cols.date) h += `<td>${date}</td>`;
+            h += `<td>${renderStatusCell(c)}</td>`;
             h += `<td></td>`;
         } else {
             // 點擊編碼文字直接進入編輯
@@ -1214,6 +1277,7 @@ function renderTable() {
             if (cols.grade) h += `<td>${c.grade || ''}</td>`;
             if (cols.desc) h += `<td>${c.description || '-'}</td>`;
             if (cols.date) h += `<td>${date}</td>`;
+            h += `<td>${renderStatusCell(c)}</td>`;
             h += `<td><button class="delete-btn" onclick="deleteCode('${c.code}')">刪除</button></td>`;
         }
         return `<tr data-code="${c.code}">${h}</tr>`;
@@ -2179,6 +2243,135 @@ function exportBomCSV() {
     const blob = new Blob(['\uFEFF' + header + rows], {type: 'text/csv;charset=utf-8;'});
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
     a.download = `BOM編碼結果_${new Date().toISOString().slice(0,10)}.csv`; a.click();
+}
+
+// === 回收桶 ===
+async function openTrash() {
+    const m = ensureModal('trashModal', '🗑 回收桶');
+    m.body.innerHTML = '<div style="padding:20px;">載入中…</div>';
+    m.wrap.style.display = 'flex';
+    try {
+        const rows = await DB.select({ deleted: true });
+        if (!rows.length) {
+            m.body.innerHTML = '<div style="padding:20px;color:#666;">回收桶是空的</div>';
+            return;
+        }
+        const rowsHtml = rows.map(r => `
+            <tr>
+                <td><code>${r.code}</code></td>
+                <td>${r.attr || ''}</td>
+                <td>${r.material || ''}</td>
+                <td>${r.description || ''}</td>
+                <td style="font-size:0.85rem;color:#666;">${(r.deleted_at || '').replace('T',' ').slice(0,16)}</td>
+                <td>
+                    <button class="btn btn-secondary" style="padding:4px 10px;font-size:0.85rem;" onclick="restoreCode('${r.code}')">↻ 還原</button>
+                    <button class="bulk-delete-btn" style="padding:4px 10px;font-size:0.85rem;margin-left:4px;" onclick="hardDeleteCode('${r.code}')">✕ 永久刪除</button>
+                </td>
+            </tr>`).join('');
+        m.body.innerHTML = `
+            <div style="padding:10px 20px;">
+                <p style="color:#666;margin-bottom:10px;">共 ${rows.length} 筆已刪除紀錄</p>
+                <table style="width:100%;border-collapse:collapse;">
+                    <thead><tr><th>編碼</th><th>屬性</th><th>物料</th><th>描述</th><th>刪除時間</th><th>操作</th></tr></thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+            </div>`;
+    } catch (e) {
+        m.body.innerHTML = `<div style="padding:20px;color:red;">載入失敗：${e.message}</div>`;
+    }
+}
+async function restoreCode(code) {
+    if (!confirm(`還原編碼 ${code}？`)) return;
+    try {
+        await DB.restore(code);
+        await loadCodes();
+        renderTable();
+        openTrash();
+        showListMsg(`✓ ${code} 已還原`, 'success');
+    } catch (e) { alert('還原失敗：' + e.message); }
+}
+async function hardDeleteCode(code) {
+    if (!confirm(`永久刪除 ${code}？此操作無法復原！`)) return;
+    try {
+        await DB.remove(code, { hard: true });
+        openTrash();
+        showListMsg(`✓ ${code} 已永久刪除`, 'success');
+    } catch (e) { alert('刪除失敗：' + e.message); }
+}
+
+// === 操作日誌 ===
+async function openLogs() {
+    const m = ensureModal('logsModal', '📋 操作日誌（最近 200 筆）');
+    m.body.innerHTML = '<div style="padding:20px;">載入中…</div>';
+    m.wrap.style.display = 'flex';
+    try {
+        const rows = await DB.logs(200);
+        if (!rows.length) { m.body.innerHTML = '<div style="padding:20px;color:#666;">尚無日誌</div>'; return; }
+        const actionLabel = { insert:'➕ 新增', update:'✏️ 修改', delete:'🗑 刪除', restore:'↻ 還原', hard_delete:'✕ 永久刪除', status:'🏷 狀態變更' };
+        const actionColor = { insert:'#28a745', update:'#1a73e8', delete:'#dc3545', restore:'#17a2b8', hard_delete:'#6c1e1e', status:'#fd7e14' };
+        const rowsHtml = rows.map(r => {
+            const detail = r.detail ? JSON.stringify(r.detail).slice(0, 120) : '';
+            return `<tr>
+                <td style="font-size:0.85rem;color:#666;white-space:nowrap;">${(r.created_at || '').replace('T',' ').slice(0,19)}</td>
+                <td><span style="color:${actionColor[r.action]||'#333'};font-weight:600;">${actionLabel[r.action]||r.action}</span></td>
+                <td><code>${r.code || '-'}</code></td>
+                <td style="font-size:0.8rem;color:#555;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title='${detail.replace(/'/g,"&apos;")}'>${detail}</td>
+            </tr>`;
+        }).join('');
+        m.body.innerHTML = `
+            <div style="padding:10px 20px;">
+                <table style="width:100%;border-collapse:collapse;">
+                    <thead><tr><th>時間</th><th>動作</th><th>編碼</th><th>詳情</th></tr></thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+            </div>`;
+    } catch (e) {
+        m.body.innerHTML = `<div style="padding:20px;color:red;">載入失敗：${e.message}</div>`;
+    }
+}
+
+// === 狀態徽章 ===
+function renderStatusCell(c) {
+    const s = c.status || '啟用';
+    const color = { '啟用':'#28a745', '草稿':'#6c757d', '停用':'#fd7e14', '淘汰':'#dc3545' }[s] || '#6c757d';
+    const opts = VALID_STATUS.map(v => `<option value="${v}" ${v===s?'selected':''}>${v}</option>`).join('');
+    return `<select class="status-select" data-code="${c.code}" onchange="changeStatus('${c.code}', this.value)"
+        style="border:1px solid ${color};color:${color};font-weight:600;font-size:0.8rem;padding:3px 6px;border-radius:12px;background:#fff;cursor:pointer;">${opts}</select>`;
+}
+
+// === 狀態切換 ===
+async function changeStatus(code, newStatus) {
+    if (!VALID_STATUS.includes(newStatus)) return;
+    try {
+        await DB.setStatus(code, newStatus);
+        const row = codesCache.find(r => r.code === code);
+        if (row) row.status = newStatus;
+        renderTable();
+        showListMsg(`✓ ${code} 狀態已改為「${newStatus}」`, 'success');
+    } catch (e) { alert('狀態變更失敗：' + e.message); }
+}
+
+// === 共用 Modal 框架 ===
+function ensureModal(id, title) {
+    let wrap = document.getElementById(id);
+    if (!wrap) {
+        wrap = document.createElement('div');
+        wrap.id = id;
+        wrap.className = 'modal-overlay';
+        wrap.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;align-items:flex-start;justify-content:center;padding:40px 20px;overflow:auto;';
+        wrap.innerHTML = `
+            <div class="modal-box" style="background:#fff;border-radius:10px;max-width:960px;width:100%;max-height:85vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,0.3);">
+                <div style="padding:14px 20px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:#fff;z-index:1;">
+                    <h3 style="margin:0;" class="modal-title"></h3>
+                    <button style="background:none;border:none;font-size:1.5rem;cursor:pointer;color:#666;" onclick="document.getElementById('${id}').style.display='none'">×</button>
+                </div>
+                <div class="modal-body"></div>
+            </div>`;
+        wrap.addEventListener('click', e => { if (e.target === wrap) wrap.style.display = 'none'; });
+        document.body.appendChild(wrap);
+    }
+    wrap.querySelector('.modal-title').textContent = title;
+    return { wrap, body: wrap.querySelector('.modal-body') };
 }
 
 // === Service Worker 註冊 ===
