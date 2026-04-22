@@ -1348,9 +1348,15 @@ function renderBomGrouped(sorted, cols, buildHeader, buildRow, renderItems) {
     Object.keys(productGroups).forEach(pCode => {
         const grp = productGroups[pCode];
         const product = grp.product;
-        if (!product || !sortedCodes.has(product.code)) return;
+        if (!product) return;
+        // 有搜尋時：成品本身或任一子項目符合即顯示
+        const hasMatch = sortedCodes.has(product.code) || grp.semi.length > 0 || grp.mat.length > 0;
+        if (!hasMatch) return;
         const totalChildren = grp.semi.length + grp.mat.length;
-        const isOpen = openGroups.has('bom_' + pCode);
+        // 有搜尋結果時自動展開此群組
+        const groupKey = 'bom_' + pCode;
+        if (hasMatch && (grp.semi.length > 0 || grp.mat.length > 0)) openGroups.add(groupKey);
+        const isOpen = openGroups.has(groupKey);
         const desc = product.description || '';
         const descShort = desc.length > 40 ? desc.substring(0, 40) + '...' : desc;
 
