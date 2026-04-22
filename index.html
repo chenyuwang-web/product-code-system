@@ -741,23 +741,29 @@ function resetForm() {
 }
 
 async function deleteCode(code) {
+    const row = codesCache.find(r => r.code === code);
+    // 鎖定檢查
+    if (row && row.locked) {
+        alert(`編碼 ${code} 已鎖定，無法刪除。\n鎖定原因：${row.lock_reason || '（未註明）'}\n\n如需刪除請先解鎖。`);
+        return;
+    }
+    // 有子項（被其他編碼當作 parent）檢查
+    const children = codesCache.filter(r => r.parent_code === code);
+    if (children.length > 0) {
+        if (!confirm(`⚠ 編碼 ${code} 底下還有 ${children.length} 個子項（${children.slice(0,3).map(c=>c.code).join(', ')}${children.length>3?'…':''}）\n\n刪除後這些子項會變成「未歸類」。仍要刪除嗎？`)) return;
+    }
     if (!confirm(`確定要刪除編碼 ${code} 嗎？\n（會移入回收桶，可從「🗑 回收桶」還原）`)) return;
     showListMsg(`正在刪除 ${code}…`, 'info');
     try {
-        await DB.remove(code);
-        // 清理 BOM 歸屬關係
-        const map = loadBomParentMap();
-        if (map[code]) {
-            if (map[code] === code) {
-                Object.keys(map).forEach(k => { if (map[k] === code) delete map[k]; });
-            }
-            delete map[code];
-            saveBomParentMap(map);
+        // 先清空所有子項的 parent_code
+        if (children.length > 0) {
+            await Promise.all(children.map(c => DB.update(c.code, { parent_code: null })));
         }
+        await DB.remove(code);
         selectedCodes.delete(code);
         await loadCodes();
         renderTable();
-        showListMsg(`✓ 編碼 ${code} 已從資料庫刪除`, 'success');
+        showListMsg(`✓ 編碼 ${code} 已移入回收桶`, 'success');
     } catch (e) {
         showListMsg(`✗ 刪除失敗：${e.message || e}`, 'error');
     }
@@ -780,27 +786,55 @@ let currentPage = 1;
 let editingCode = null; // 目前正在編輯的 code
 const selectedCodes = new Set(); // 勾選的 codes
 
-// === BOM 成品歸屬對照 ===
+// === BOM 成品歸屬對照（已改為 Supabase parent_code 欄位）===
+// 為了相容既有呼叫方，loadBomParentMap() 仍回傳 {code: parentCode} 形式，從 codesCache 即時組出
 function loadBomParentMap() {
-    try { return JSON.parse(localStorage.getItem('bomParentMap') || '{}'); } catch { return {}; }
+    const map = {};
+    codesCache.forEach(c => { if (c.parent_code) map[c.code] = c.parent_code; });
+    return map;
 }
-function saveBomParentMap(map) {
-    localStorage.setItem('bomParentMap', JSON.stringify(map));
+// 已改為 DB 持久化，保留空實作避免舊呼叫出錯
+function saveBomParentMap() { /* no-op，資料存在 DB */ }
+
+async function assignParent(childCode, parentCode) {
+    try {
+        await DB.update(childCode, { parent_code: parentCode || null });
+        const row = codesCache.find(r => r.code === childCode);
+        if (row) row.parent_code = parentCode || null;
+        renderTable();
+    } catch (e) {
+        alert('更新歸屬失敗：' + e.message);
+    }
 }
-function assignParent(childCode, parentCode) {
-    const map = loadBomParentMap();
-    if (parentCode) map[childCode] = parentCode;
-    else delete map[childCode];
-    saveBomParentMap(map);
-    renderTable();
+async function removeFromBomGroup(childCode) {
+    await assignParent(childCode, null);
 }
-function removeFromBomGroup(childCode) {
-    assignParent(childCode, null);
+
+// 一次性遷移：把 localStorage 舊資料寫入 DB 後清空
+async function migrateBomMapToDb() {
+    try {
+        const raw = localStorage.getItem('bomParentMap');
+        if (!raw) return;
+        const map = JSON.parse(raw);
+        const entries = Object.entries(map).filter(([k, v]) => k && v && k !== v);
+        if (!entries.length) { localStorage.removeItem('bomParentMap'); return; }
+        // 只對目前 DB 中尚無 parent_code 的編碼做遷移，避免覆寫
+        const promises = entries.map(async ([child, parent]) => {
+            const row = codesCache.find(r => r.code === child);
+            if (row && !row.parent_code) {
+                await DB.update(child, { parent_code: parent });
+                row.parent_code = parent;
+            }
+        });
+        await Promise.all(promises);
+        localStorage.removeItem('bomParentMap');
+        console.log(`✓ BOM 歸屬已遷移到雲端（${entries.length} 筆）`);
+    } catch (e) { console.warn('BOM 遷移略過：', e); }
 }
 
 // 自動偵測 BOM 歸屬：依匯入時間戳分批，同批內找成品作為 parent
-function autoDetectBomGroups() {
-    const map = loadBomParentMap();
+// 會寫入 DB 的 parent_code 欄位（同步至所有裝置）
+async function autoDetectBomGroups() {
     const codes = codesCache;
     if (!codes.length) return;
 
@@ -808,48 +842,46 @@ function autoDetectBomGroups() {
     const batches = {};
     codes.forEach(c => {
         if (!c.created_at) return;
-        // 取到秒級精度
         const ts = c.created_at.substring(0, 19);
         if (!batches[ts]) batches[ts] = [];
         batches[ts].push(c);
     });
 
-    // 對於每個批次，如果裡面有成品，就把其他項目歸到該成品
-    let changed = false;
+    const toUpdate = []; // [{code, parent}]
     Object.values(batches).forEach(batch => {
-        if (batch.length < 2) return; // 單筆不處理
+        if (batch.length < 2) return;
         const product = batch.find(c => c.attr === '成品');
         if (!product) return;
         batch.forEach(c => {
-            if (!map[c.code]) {
-                map[c.code] = product.code;
-                changed = true;
-            }
+            if (!c.parent_code) toUpdate.push({ code: c.code, parent: product.code });
         });
     });
 
-    // 針對沒有同批成品的項目，嘗試用編碼前綴匹配
-    // 例如同一個 BOM 的物料通常 source 相同
     const products = codes.filter(c => c.attr === '成品');
     if (products.length > 0) {
         codes.forEach(c => {
-            if (map[c.code] || c.attr === '成品') return;
-            // 找最近時間的成品
-            let bestProduct = null;
-            let bestDiff = Infinity;
+            if (c.parent_code || c.attr === '成品') return;
+            if (toUpdate.find(u => u.code === c.code)) return;
+            let bestProduct = null, bestDiff = Infinity;
             products.forEach(p => {
                 const diff = Math.abs(new Date(c.created_at) - new Date(p.created_at));
                 if (diff < bestDiff) { bestDiff = diff; bestProduct = p; }
             });
-            // 如果時間差在 60 分鐘內，歸屬到最近的成品
             if (bestProduct && bestDiff < 3600000) {
-                map[c.code] = bestProduct.code;
-                changed = true;
+                toUpdate.push({ code: c.code, parent: bestProduct.code });
             }
         });
     }
 
-    if (changed) saveBomParentMap(map);
+    if (!toUpdate.length) return;
+    // 批次寫入 DB
+    await Promise.all(toUpdate.map(async u => {
+        try {
+            await DB.update(u.code, { parent_code: u.parent });
+            const row = codesCache.find(r => r.code === u.code);
+            if (row) row.parent_code = u.parent;
+        } catch (e) { console.warn('寫入歸屬失敗', u, e); }
+    }));
 }
 
 function toggleGroup(key) {
@@ -929,46 +961,47 @@ function clearSelection() {
 async function bulkDelete() {
     const n = selectedCodes.size;
     if (n === 0) return;
-    if (!confirm(`確定要從資料庫刪除這 ${n} 筆編碼嗎？\n此操作無法復原。`)) return;
-
+    // 過濾掉已鎖定的編碼
+    const lockedList = [...selectedCodes].filter(code => {
+        const r = codesCache.find(x => x.code === code);
+        return r && r.locked;
+    });
+    if (lockedList.length > 0) {
+        alert(`以下 ${lockedList.length} 筆已鎖定，已自動排除：\n${lockedList.join(', ')}`);
+        lockedList.forEach(c => selectedCodes.delete(c));
+    }
     const codes = [...selectedCodes];
-    showListMsg(`正在刪除 ${n} 筆…`, 'info');
+    if (codes.length === 0) { updateSelectedBtn(); return; }
+    if (!confirm(`確定要刪除這 ${codes.length} 筆編碼嗎？\n（會移入回收桶，可從「🗑 回收桶」還原）`)) return;
+
+    showListMsg(`正在刪除 ${codes.length} 筆…`, 'info');
 
     let success = 0, fail = 0;
     for (const code of codes) {
         try {
+            // 清掉子項的 parent_code
+            const kids = codesCache.filter(r => r.parent_code === code);
+            await Promise.all(kids.map(k => DB.update(k.code, { parent_code: null })));
             await DB.remove(code);
-            // 清理 BOM 歸屬
-            const map = loadBomParentMap();
-            if (map[code]) {
-                if (map[code] === code) {
-                    Object.keys(map).forEach(k => { if (map[k] === code) delete map[k]; });
-                }
-                delete map[code];
-                saveBomParentMap(map);
-            }
             selectedCodes.delete(code);
             success++;
-        } catch (e) {
-            fail++;
-        }
+        } catch (e) { fail++; }
     }
 
     await loadCodes();
     renderTable();
 
     if (fail === 0) {
-        showListMsg(`✓ 已從資料庫刪除 ${success} 筆`, 'success');
+        showListMsg(`✓ 已移入回收桶 ${success} 筆`, 'success');
     } else {
         showListMsg(`✓ 成功 ${success} 筆，✗ 失敗 ${fail} 筆`, 'error');
     }
 }
 
-function bulkReassign() {
+async function bulkReassign() {
     const targetParent = document.getElementById('bulkParentSelect').value;
     if (selectedCodes.size === 0) return;
 
-    // 確認排除成品本身（成品不應被改歸屬）
     const products = new Set(codesCache.filter(c => c.attr === '成品').map(c => c.code));
     const toMove = [...selectedCodes].filter(code => !products.has(code));
 
@@ -977,23 +1010,22 @@ function bulkReassign() {
         return;
     }
 
-    const label = targetParent
-        ? `歸入 ${targetParent}` : '移出至未歸類';
+    const label = targetParent ? `歸入 ${targetParent}` : '移出至未歸類';
     if (!confirm(`確定將 ${toMove.length} 筆品項${label}？`)) return;
 
-    const pMap = loadBomParentMap();
-    toMove.forEach(code => {
-        if (targetParent) {
-            pMap[code] = targetParent;
-            if (!pMap[targetParent]) pMap[targetParent] = targetParent;
-        } else {
-            delete pMap[code];
-        }
-    });
-    saveBomParentMap(pMap);
+    showListMsg(`正在更新 ${toMove.length} 筆歸屬…`, 'info');
+    let success = 0, fail = 0;
+    await Promise.all(toMove.map(async code => {
+        try {
+            await DB.update(code, { parent_code: targetParent || null });
+            const row = codesCache.find(r => r.code === code);
+            if (row) row.parent_code = targetParent || null;
+            success++;
+        } catch (e) { fail++; }
+    }));
     clearSelection();
     renderTable();
-    showMsg(`已將 ${toMove.length} 筆品項${label}`, 'success');
+    showListMsg(fail === 0 ? `✓ 已將 ${success} 筆${label}` : `✓ 成功 ${success} / ✗ 失敗 ${fail}`, fail === 0 ? 'success' : 'error');
 }
 
 function exportSelectedCSV() {
@@ -1072,17 +1104,13 @@ async function saveEdit(origCode) {
                 selectedCodes.delete(origCode);
                 selectedCodes.add(newCode);
             }
-            // 更新 BOM 歸屬
-            const pMap = loadBomParentMap();
-            if (pMap[origCode]) {
-                const wasParent = pMap[origCode] === origCode;
-                if (wasParent) {
-                    // 成品編碼改了，更新所有子項目的 parent
-                    Object.keys(pMap).forEach(k => { if (pMap[k] === origCode) pMap[k] = newCode; });
-                }
-                pMap[newCode] = pMap[origCode] === origCode ? newCode : pMap[origCode];
-                delete pMap[origCode];
-                saveBomParentMap(pMap);
+            // 編碼改變：更新所有把 origCode 當 parent 的子項
+            const kids = codesCache.filter(r => r.parent_code === origCode);
+            await Promise.all(kids.map(k => DB.update(k.code, { parent_code: newCode })));
+            // 新插入的那筆若原本有 parent，需要補上
+            const oldParent = oldItem && oldItem.parent_code;
+            if (oldParent && oldParent !== origCode) {
+                await DB.update(newCode, { parent_code: oldParent });
             }
             showMsg(`編碼已從 ${origCode} 更新為 ${newCode}`, 'success');
         } else {
@@ -1099,17 +1127,7 @@ async function saveEdit(origCode) {
         // 更新 BOM 所屬成品
         if (newParent !== undefined) {
             const finalCode = (newCode && newCode !== origCode) ? newCode : origCode;
-            const pMap = loadBomParentMap();
-            if (newParent === '') {
-                // 移出：刪除歸屬
-                delete pMap[finalCode];
-            } else {
-                // 設定歸屬
-                pMap[finalCode] = newParent;
-                // 確保新 parent 的成品自身也標記
-                if (!pMap[newParent]) pMap[newParent] = newParent;
-            }
-            saveBomParentMap(pMap);
+            await DB.update(finalCode, { parent_code: newParent || null });
         }
 
         editingCode = null;
@@ -1270,15 +1288,24 @@ function renderTable() {
             h += `<td>${renderStatusCell(c)}</td>`;
             h += `<td></td>`;
         } else {
-            // 點擊編碼文字直接進入編輯
-            h += `<td class="code-cell" title="點擊編輯" onclick="editCode('${c.code}')" style="cursor:pointer;text-decoration:underline dotted;">${c.code}</td>`;
+            // 點擊編碼文字直接進入編輯（鎖定則不可編輯）
+            const lockIcon = c.locked ? `<span title="已鎖定：${(c.lock_reason||'').replace(/"/g,'&quot;')}" style="margin-right:4px;color:#dc3545;">🔒</span>` : '';
+            if (c.locked) {
+                h += `<td class="code-cell" title="已鎖定" style="cursor:not-allowed;color:#666;">${lockIcon}${c.code}</td>`;
+            } else {
+                h += `<td class="code-cell" title="點擊編輯" onclick="editCode('${c.code}')" style="cursor:pointer;text-decoration:underline dotted;">${lockIcon}${c.code}</td>`;
+            }
             if (cols.source) h += `<td>${c.source || ''}</td>`;
             if (cols.material) h += `<td>${c.material_code || ''} ${c.material || ''}</td>`;
             if (cols.grade) h += `<td>${c.grade || ''}</td>`;
             if (cols.desc) h += `<td>${c.description || '-'}</td>`;
             if (cols.date) h += `<td>${date}</td>`;
             h += `<td>${renderStatusCell(c)}</td>`;
-            h += `<td><button class="delete-btn" onclick="deleteCode('${c.code}')">刪除</button></td>`;
+            const lockBtn = c.locked
+                ? `<button class="btn btn-secondary" style="padding:3px 8px;font-size:0.78rem;" onclick="toggleLock('${c.code}')" title="解鎖">🔓 解鎖</button>`
+                : `<button class="btn btn-secondary" style="padding:3px 8px;font-size:0.78rem;" onclick="toggleLock('${c.code}')" title="鎖定（鎖定後禁止刪除）">🔒 鎖</button>`;
+            const delBtn = c.locked ? '' : `<button class="delete-btn" onclick="deleteCode('${c.code}')">刪除</button>`;
+            h += `<td style="white-space:nowrap;">${lockBtn} ${delBtn}</td>`;
         }
         return `<tr data-code="${c.code}">${h}</tr>`;
     }
@@ -2351,6 +2378,30 @@ async function changeStatus(code, newStatus) {
     } catch (e) { alert('狀態變更失敗：' + e.message); }
 }
 
+// === 編碼鎖定 ===
+async function toggleLock(code) {
+    const row = codesCache.find(r => r.code === code);
+    if (!row) return;
+    if (row.locked) {
+        if (!confirm(`解除 ${code} 的鎖定？解鎖後可被刪除或修改。`)) return;
+        try {
+            await DB.update(code, { locked: false, lock_reason: null });
+            row.locked = false; row.lock_reason = null;
+            renderTable();
+            showListMsg(`✓ ${code} 已解除鎖定`, 'success');
+        } catch (e) { alert('解鎖失敗：' + e.message); }
+    } else {
+        const reason = prompt(`鎖定 ${code}\n請輸入鎖定原因（例：已發行、量產中、審核通過）：`, '已發行');
+        if (reason === null) return;
+        try {
+            await DB.update(code, { locked: true, lock_reason: reason || '（未註明）' });
+            row.locked = true; row.lock_reason = reason || '（未註明）';
+            renderTable();
+            showListMsg(`🔒 ${code} 已鎖定`, 'success');
+        } catch (e) { alert('鎖定失敗：' + e.message); }
+    }
+}
+
 // === 共用 Modal 框架 ===
 function ensureModal(id, title) {
     let wrap = document.getElementById(id);
@@ -2383,7 +2434,9 @@ if ('serviceWorker' in navigator) {
 (async function init() {
     try {
         await loadCodes();
-        autoDetectBomGroups();
+        // 一次性遷移：localStorage 的舊 BOM 歸屬 → DB parent_code
+        await migrateBomMapToDb();
+        await autoDetectBomGroups();
         renderTable();
     } catch (e) {
         document.getElementById('loadingOverlay').textContent = '載入失敗：' + e.message;
