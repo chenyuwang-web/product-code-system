@@ -487,6 +487,7 @@
                 <option value="">── 移出（未歸類）</option>
             </select>
             <button class="bulk-confirm-btn" onclick="bulkReassign()">確認更換</button>
+            <button class="bulk-confirm-btn" onclick="bulkDelete()" style="background:#d32f2f;">🗑 批次刪除</button>
             <button class="bulk-cancel-btn" onclick="clearSelection()">取消選取</button>
         </div>
         <div class="export-row">
@@ -853,6 +854,44 @@ function clearSelection() {
     selectedCodes.clear();
     document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = false);
     updateSelectedBtn();
+}
+
+async function bulkDelete() {
+    const n = selectedCodes.size;
+    if (n === 0) return;
+    if (!confirm(`確定要從資料庫刪除這 ${n} 筆編碼嗎？\n此操作無法復原。`)) return;
+
+    const codes = [...selectedCodes];
+    showListMsg(`正在刪除 ${n} 筆…`, 'info');
+
+    let success = 0, fail = 0;
+    for (const code of codes) {
+        try {
+            await DB.remove(code);
+            // 清理 BOM 歸屬
+            const map = loadBomParentMap();
+            if (map[code]) {
+                if (map[code] === code) {
+                    Object.keys(map).forEach(k => { if (map[k] === code) delete map[k]; });
+                }
+                delete map[code];
+                saveBomParentMap(map);
+            }
+            selectedCodes.delete(code);
+            success++;
+        } catch (e) {
+            fail++;
+        }
+    }
+
+    await loadCodes();
+    renderTable();
+
+    if (fail === 0) {
+        showListMsg(`✓ 已從資料庫刪除 ${success} 筆`, 'success');
+    } else {
+        showListMsg(`✓ 成功 ${success} 筆，✗ 失敗 ${fail} 筆`, 'error');
+    }
 }
 
 function bulkReassign() {
