@@ -489,6 +489,7 @@
             <button class="bulk-cancel-btn" onclick="clearSelection()">取消選取</button>
         </div>
         <div class="export-row">
+            <button class="btn btn-secondary" onclick="refreshCodes()" title="重新從資料庫載入">🔄 重新整理</button>
             <button class="btn btn-secondary" onclick="exportCSV()">匯出全部 CSV</button>
             <button class="export-selected-btn" id="exportSelectedBtn" onclick="exportSelectedCSV()" disabled>匯出已勾選 (0)</button>
         </div>
@@ -1378,6 +1379,17 @@ function buildPager(page, totalPages, totalItems) {
     return h;
 }
 
+async function refreshCodes() {
+    try {
+        showMsg('正在重新整理…', 'success');
+        await loadCodes();
+        renderTable();
+        showMsg('資料已更新', 'success');
+    } catch (e) {
+        showMsg('重新整理失敗：' + e.message, 'error');
+    }
+}
+
 function exportCSV() {
     if (!codesCache.length) { showMsg('沒有資料可匯出', 'error'); return; }
     const header = '編碼,屬性,產品來源,物料類型代碼,物料類型,品別,描述,建立日期\n';
@@ -1401,9 +1413,11 @@ function switchImportTab(tab, btn) {
 // === 貼上匯入 ===
 let bulkParsed = [];
 
-function previewBulk() {
+async function previewBulk() {
     const raw = document.getElementById('bulkInput').value.trim();
     if (!raw) { showMsg('請先貼上編碼資料', 'error', 'bulkMsg'); return; }
+    showMsg('正在從資料庫重新整理…', 'success', 'bulkMsg');
+    await loadCodes(); // 先重新抓最新資料，避免快取舊資料誤判衝突
     const lines = raw.split('\n').filter(l => l.trim());
     bulkParsed = [];
 
@@ -1536,7 +1550,8 @@ let fileParsed = [];
 function handleFileDrop(e) { if (e.dataTransfer.files[0]) processFile(e.dataTransfer.files[0]); }
 function handleFileSelect(e) { if (e.target.files[0]) processFile(e.target.files[0]); e.target.value = ''; }
 
-function processFile(file) {
+async function processFile(file) {
+    await loadCodes(); // 先重新抓最新資料，避免快取舊資料誤判衝突
     const reader = new FileReader();
     reader.onload = function(e) {
         let allRows = []; // 每行的所有欄位
