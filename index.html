@@ -266,6 +266,7 @@
             <div class="code" id="preview">------</div>
         </div>
         <div id="msg" class="msg"></div>
+        <div id="msgDetail" style="display:none;background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:12px 16px;margin-top:8px;font-size:0.88rem;color:#555;"></div>
         <div class="btn-row">
             <button class="btn btn-primary" id="addBtn" onclick="addCode()" disabled>確認新增</button>
             <button class="btn btn-secondary" onclick="resetForm()">清除重填</button>
@@ -672,6 +673,41 @@ function getNextSerial(attr, source, material, grade) {
     return String(next).padStart(4, '0');
 }
 
+// 查詢已存在編碼的詳細資訊（描述、所屬成品）
+function getExistingCodeInfo(code) {
+    const item = codesCache.find(c => c.code === code);
+    if (!item) return null;
+    const parentMap = loadBomParentMap();
+    const parentCode = parentMap[code];
+    const parentItem = parentCode ? codesCache.find(c => c.code === parentCode) : null;
+    return { item, parentCode, parentItem };
+}
+
+function showCodeDetail(code) {
+    const detail = document.getElementById('msgDetail');
+    if (!detail) return;
+    const info = getExistingCodeInfo(code);
+    if (!info) { detail.style.display = 'none'; return; }
+    const { item, parentCode, parentItem } = info;
+    const desc = item.description || '（無描述）';
+    const attrLabel = item.attr || '';
+    let parentHtml = '';
+    if (parentCode) {
+        const pDesc = parentItem ? (parentItem.description || '') : '';
+        parentHtml = `<br>📦 所屬成品：<strong style="color:#1a73e8;">${parentCode}</strong>${pDesc ? ` — ${pDesc}` : ''}`;
+    } else if (item.attr !== '成品') {
+        parentHtml = `<br>📦 所屬成品：<span style="color:#e65100;">未歸類</span>`;
+    }
+    detail.innerHTML = `⚠️ <strong>${code}</strong> 已存在：
+        <br>🏷️ 屬性：${attrLabel} ／ 描述：${desc}${parentHtml}`;
+    detail.style.display = 'block';
+}
+
+function hideCodeDetail() {
+    const detail = document.getElementById('msgDetail');
+    if (detail) detail.style.display = 'none';
+}
+
 function updatePreview() {
     const vals = selectors.map(id => document.getElementById(id).value);
     const serial = document.getElementById('serial').value;
@@ -682,11 +718,24 @@ function updatePreview() {
             document.getElementById('serial').placeholder = `下一個：${next}`;
         }
         const s = serial || getNextSerial(...vals);
-        document.getElementById('preview').textContent = vals.join('') + s.padStart(4, '0');
-        document.getElementById('addBtn').disabled = false;
+        const code = vals.join('') + s.padStart(4, '0');
+        document.getElementById('preview').textContent = code;
+
+        // 即時衝突檢查
+        const exists = codesCache.some(c => c.code === code);
+        if (exists) {
+            showMsg(`編碼 ${code} 已存在，請調整選項`, 'error');
+            showCodeDetail(code);
+            document.getElementById('addBtn').disabled = true;
+        } else {
+            document.getElementById('msg').style.display = 'none';
+            hideCodeDetail();
+            document.getElementById('addBtn').disabled = false;
+        }
     } else {
         document.getElementById('preview').textContent = '------';
         document.getElementById('addBtn').disabled = true;
+        hideCodeDetail();
     }
 }
 
@@ -718,7 +767,9 @@ async function addCode() {
 
     const code = vals.join('') + serial;
     if (codesCache.some(c => c.code === code)) {
-        showMsg(`編碼 ${code} 已經存在，不可重複使用！`, 'error'); return;
+        showMsg(`編碼 ${code} 已經存在，不可重複使用！`, 'error');
+        showCodeDetail(code);
+        return;
     }
 
     const materialEl = document.getElementById('material');
@@ -747,6 +798,8 @@ function resetForm() {
     document.getElementById('preview').textContent = '------';
     document.getElementById('addBtn').disabled = true;
     document.getElementById('serial').placeholder = '自動帶入下一個可用號碼';
+    document.getElementById('msg').style.display = 'none';
+    hideCodeDetail();
 }
 
 async function deleteCode(code) {
