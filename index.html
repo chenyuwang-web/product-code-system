@@ -2110,29 +2110,52 @@ async function confirmFileBulk() {
 function loadVendorPartMap() { return JSON.parse(localStorage.getItem('vendorPartMap') || '{}'); }
 function saveVendorPartMap(m) { localStorage.setItem('vendorPartMap', JSON.stringify(m)); }
 
-// 從 codesCache 或 vendorPartMap 查詢原廠料號是否已有對應編碼
-function findCodeByPartNo(partNo) {
-    if (!partNo) return null;
-    // 1. 查 vendorPartMap（最快）
+// 從 codesCache / vendorPartMap 查詢 BOM 品項是否已有對應編碼
+// 比對策略（由精確到寬鬆）：
+//  1. vendorPartMap[partNo] or vendorPartMap['n:'+itemName]
+//  2. description === partNo 或 description === itemName（完全符合）
+//  3. description 開頭為 partNo（格式「料號 / 名稱」）
+//  4. partNo（≥6字元）包含在 description 中，或 description 包含在 itemName 中
+function findCodeByBomItem(partNo, itemName) {
+    const pn = (partNo  || '').trim();
+    const nm = (itemName || '').trim();
+    if (!pn && !nm) return null;
+
     const vmap = loadVendorPartMap();
-    if (vmap[partNo]) {
-        // 確認此編碼還存在於資料庫
-        if (codesCache.some(c => c.code === vmap[partNo])) return vmap[partNo];
-        // 如果已被刪除就清掉
-        delete vmap[partNo]; saveVendorPartMap(vmap);
+
+    // 1a. vendorPartMap by partNo
+    if (pn && vmap[pn]) {
+        if (codesCache.some(c => c.code === vmap[pn])) return vmap[pn];
+        delete vmap[pn]; saveVendorPartMap(vmap);
     }
-    // 2. 從 codesCache 的 description 比對（相容既有資料）
-    //    description 格式通常為「原廠料號 / 名稱」或單純「原廠料號」
+    // 1b. vendorPartMap by itemName（前綴 'n:' 避免 key 衝突）
+    const nmKey = 'n:' + nm;
+    if (nm && vmap[nmKey]) {
+        if (codesCache.some(c => c.code === vmap[nmKey])) return vmap[nmKey];
+        delete vmap[nmKey]; saveVendorPartMap(vmap);
+    }
+
+    // 2-4. 掃描 codesCache
     const hit = codesCache.find(c => {
-        const desc = c.description || '';
-        return desc === partNo ||
-               desc.startsWith(partNo + ' /') ||
-               desc.startsWith(partNo + '/') ||
-               desc.startsWith(partNo + '\t');
+        const desc = (c.description || '').trim();
+        if (!desc) return false;
+        // 完全符合
+        if (pn && desc === pn) return true;
+        if (nm && desc === nm) return true;
+        // description 開頭為 partNo（格式「料號 / 名稱」或「料號\t名稱」）
+        if (pn && (desc.startsWith(pn + ' /') || desc.startsWith(pn + '/') || desc.startsWith(pn + '\t'))) return true;
+        // partNo（≥6字元）出現在 description 中
+        if (pn && pn.length >= 6 && desc.includes(pn)) return true;
+        // itemName（≥6字元）出現在 description 中，或 description 出現在 itemName 中
+        if (nm && nm.length >= 6 && desc.includes(nm)) return true;
+        if (nm && desc.length >= 6 && nm.includes(desc)) return true;
+        return false;
     });
+
     if (hit) {
-        // 補存到 vendorPartMap 加速下次查詢
-        vmap[partNo] = hit.code;
+        // 補存加速下次
+        if (pn) { vmap[pn] = hit.code; }
+        if (nm) { vmap[nmKey] = hit.code; }
         saveVendorPartMap(vmap);
         return hit.code;
     }
@@ -2242,8 +2265,8 @@ function renderBomTable() {
         let code = '';
         item.isExisting = false; // 是否沿用資料庫既有編碼
         if (a && s && m && g) {
-            // 優先：從資料庫/vendorPartMap 查詢原廠料號是否已有對應編碼
-            const dbCode = item.partNo ? findCodeByPartNo(item.partNo) : null;
+            // 優先：從資料庫/vendorPartMap 查詢是否已有對應編碼（partNo + 品項名稱都比對）
+            const dbCode = findCodeByBomItem(item.partNo, item.name);
             if (dbCode) {
                 code = dbCode;
                 item.isExisting = true;
@@ -2532,10 +2555,12 @@ async function confirmBom() {
             saveBomParentMap(parentMap);
         }
 
-        // 儲存原廠料號對照表（供下次匯入使用）
+        // 儲存原廠料號 + 品項名稱對照表（供下次匯入使用）
         const vmap = loadVendorPartMap();
         toAdd.forEach(item => {
-            if (item.partNo && item.generatedCode) vmap[item.partNo] = item.generatedCode;
+            if (!item.generatedCode) return;
+            if (item.partNo) vmap[item.partNo.trim()] = item.generatedCode;
+            if (item.name)   vmap['n:' + item.name.trim()] = item.generatedCode;
         });
         saveVendorPartMap(vmap);
 
