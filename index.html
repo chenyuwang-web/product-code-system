@@ -1227,7 +1227,7 @@ function renderTable() {
 
     if (groupBy === 'bom') {
         // === 依成品 BOM 分類 ===
-        html = renderBomGrouped(sorted, cols, buildHeader, buildRow, renderItems);
+        html = renderBomGrouped(sorted, cols, buildHeader, buildRow, renderItems, query);
     } else if (groupBy === 'none') {
         let displayItems = sorted;
         let pagerHtml = '';
@@ -1307,7 +1307,7 @@ function renderTable() {
 }
 
 // === 依成品 BOM 分類渲染 ===
-function renderBomGrouped(sorted, cols, buildHeader, buildRow, renderItems) {
+function renderBomGrouped(sorted, cols, buildHeader, buildRow, renderItems, query) {
     const parentMap = loadBomParentMap();
     const codeMap = {};
     codesCache.forEach(c => codeMap[c.code] = c);
@@ -1354,9 +1354,9 @@ function renderBomGrouped(sorted, cols, buildHeader, buildRow, renderItems) {
         const hasMatch = sortedCodes.has(product.code) || grp.semi.length > 0 || grp.mat.length > 0;
         if (!hasMatch) return;
         const totalChildren = grp.semi.length + grp.mat.length;
-        // 有搜尋結果時自動展開此群組
         const groupKey = 'bom_' + pCode;
-        if (hasMatch && (grp.semi.length > 0 || grp.mat.length > 0)) openGroups.add(groupKey);
+        // 只有在搜尋時才自動展開，否則尊重使用者的收折操作
+        if (query && (grp.semi.length > 0 || grp.mat.length > 0)) openGroups.add(groupKey);
         const isOpen = openGroups.has(groupKey);
         const desc = product.description || '';
         const descShort = desc.length > 40 ? desc.substring(0, 40) + '...' : desc;
