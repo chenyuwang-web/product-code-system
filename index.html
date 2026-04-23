@@ -539,7 +539,9 @@ const DB = {
     },
     async insert(rows) {
         const body = Array.isArray(rows) ? rows : [rows];
-        const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}`, {
+        if (body.length === 0) return [];
+        // on_conflict=code 讓 PostgREST 產生 ON CONFLICT (code) DO NOTHING，避免重複 key 炸掉
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?on_conflict=code`, {
             method: 'POST',
             headers: { ..._HJ(), 'Prefer': 'resolution=ignore-duplicates,return=representation' },
             body: JSON.stringify(body)
@@ -2523,13 +2525,17 @@ async function confirmBom() {
         });
     });
 
-    if (!records.length && reuseExist === 0 && skipExist === 0) {
-        showMsg('沒有可新增的編碼，請確認品項設定', 'error', 'bomMsg');
+    if (!records.length && reuseExist === 0) {
+        showMsg(skipExist > 0 ? `所有 ${skipExist} 筆編碼均已存在，無需重新匯入` : '沒有可新增的編碼，請確認品項設定', skipExist > 0 ? 'success' : 'error', 'bomMsg');
         return;
     }
 
     try {
-        if (records.length > 0) await DB.insert(records);
+        // 最後防線：再過濾一次，確保 records 裡沒有資料庫已有的編碼
+        const finalRecords = records.filter(r => !existingCodes.has(r.code));
+        const extraSkip = records.length - finalRecords.length;
+        if (extraSkip > 0) skipExist += extraSkip;
+        if (finalRecords.length > 0) await DB.insert(finalRecords);
 
         // 儲存 BOM 成品歸屬關係
         const parentMap = loadBomParentMap();
@@ -2564,7 +2570,7 @@ async function confirmBom() {
         });
         saveVendorPartMap(vmap);
 
-        let msg = records.length > 0 ? `成功匯入 ${records.length} 筆新編碼！` : '';
+        let msg = finalRecords.length > 0 ? `成功匯入 ${finalRecords.length} 筆新編碼！` : '';
         if (reuseExist) msg += `（${reuseExist} 筆原廠料號已有對應編碼，直接沿用）`;
         if (skipDup) msg += `（${skipDup} 筆同料號已合併）`;
         if (skipExist) msg += `（${skipExist} 筆已存在已跳過）`;
