@@ -2106,6 +2106,39 @@ async function confirmFileBulk() {
     } catch (e) { showMsg('匯入失敗：' + e.message, 'error', 'fileMsg'); }
 }
 
+// === 原廠料號 → 產品編碼 持久對照表 ===
+function loadVendorPartMap() { return JSON.parse(localStorage.getItem('vendorPartMap') || '{}'); }
+function saveVendorPartMap(m) { localStorage.setItem('vendorPartMap', JSON.stringify(m)); }
+
+// 從 codesCache 或 vendorPartMap 查詢原廠料號是否已有對應編碼
+function findCodeByPartNo(partNo) {
+    if (!partNo) return null;
+    // 1. 查 vendorPartMap（最快）
+    const vmap = loadVendorPartMap();
+    if (vmap[partNo]) {
+        // 確認此編碼還存在於資料庫
+        if (codesCache.some(c => c.code === vmap[partNo])) return vmap[partNo];
+        // 如果已被刪除就清掉
+        delete vmap[partNo]; saveVendorPartMap(vmap);
+    }
+    // 2. 從 codesCache 的 description 比對（相容既有資料）
+    //    description 格式通常為「原廠料號 / 名稱」或單純「原廠料號」
+    const hit = codesCache.find(c => {
+        const desc = c.description || '';
+        return desc === partNo ||
+               desc.startsWith(partNo + ' /') ||
+               desc.startsWith(partNo + '/') ||
+               desc.startsWith(partNo + '\t');
+    });
+    if (hit) {
+        // 補存到 vendorPartMap 加速下次查詢
+        vmap[partNo] = hit.code;
+        saveVendorPartMap(vmap);
+        return hit.code;
+    }
+    return null;
+}
+
 // === BOM 自動編碼 ===
 let bomItems = [];
 
@@ -2207,14 +2240,20 @@ function renderBomTable() {
         const g = batchGrade || item.grade;
 
         let code = '';
+        item.isExisting = false; // 是否沿用資料庫既有編碼
         if (a && s && m && g) {
-            // 如果有原廠料號且之前已經產生過編碼，直接沿用
-            if (item.partNo && partNoCodeMap[item.partNo]) {
+            // 優先：從資料庫/vendorPartMap 查詢原廠料號是否已有對應編碼
+            const dbCode = item.partNo ? findCodeByPartNo(item.partNo) : null;
+            if (dbCode) {
+                code = dbCode;
+                item.isExisting = true;
+                if (item.partNo) partNoCodeMap[item.partNo] = code;
+            } else if (item.partNo && partNoCodeMap[item.partNo]) {
+                // 同一批次內的相同料號直接沿用
                 code = partNoCodeMap[item.partNo];
             } else {
                 const serial = getNextBomSerial(a, s, m, g, idx);
                 code = a + s + m + g + serial;
-                // 記錄原廠料號對應的編碼
                 if (item.partNo) partNoCodeMap[item.partNo] = code;
             }
         }
@@ -2245,7 +2284,16 @@ function renderBomTable() {
                 <option value="">--</option>${matOpts.map(([v]) => `<option value="${v}"${m===v?' selected':''}>${v}</option>`).join('')}</select></td>
             <td><select onchange="bomItems[${idx}].grade=this.value;updateBomPreview()" style="padding:4px;border-radius:6px;border:1px solid ${!g && item.checked ? '#d32f2f' : '#ddd'};font-size:0.85rem;"${batchGrade ? ' disabled' : ''}>
                 <option value="">--</option>${gradeOpts.map(([v]) => `<option value="${v}"${g===v?' selected':''}>${v}</option>`).join('')}</select></td>
-            <td class="code-cell">${code ? (isFallback ? '<span style="color:#d32f2f;font-weight:600;" title="物料類型為預設值，請確認">' + code + ' ⚠</span>' : code) : (item.checked ? '<span style="color:#d32f2f;font-weight:600;">缺少：' + missing.join('、') + '</span>' : '<span style="color:#aaa;">已跳過</span>')}</td>
+            <td class="code-cell">${code
+                ? (item.isExisting
+                    ? `<span style="color:#2e7d32;font-weight:700;" title="此原廠料號已有對應編碼，直接沿用，不會重複新增">${code} <span style="font-size:0.75rem;background:#e8f5e9;color:#2e7d32;border:1px solid #a5d6a7;border-radius:4px;padding:1px 6px;font-weight:600;">✓ 沿用</span></span>`
+                    : (isFallback
+                        ? `<span style="color:#d32f2f;font-weight:600;" title="物料類型為預設值，請確認">${code} ⚠</span>`
+                        : code))
+                : (item.checked
+                    ? `<span style="color:#d32f2f;font-weight:600;">缺少：${missing.join('、')}</span>`
+                    : '<span style="color:#aaa;">已跳過</span>')
+            }</td>
         </tr>`;
     });
     document.getElementById('bomBody').innerHTML = html;
@@ -2420,15 +2468,20 @@ async function confirmBom() {
     const batchMat = document.getElementById('bomMaterial').value;
     const batchGrade = document.getElementById('bomGrade').value;
 
-    // 去重：相同編碼只保留第一筆，且排除資料庫已存在的編碼
+    // 去重：相同編碼只保留第一筆，且排除資料庫已存在 / 沿用既有 的編碼
     const seenCodes = new Set();
     const existingCodes = new Set(codesCache.map(c => c.code));
     const records = [];
-    let skipDup = 0, skipExist = 0;
+    let skipDup = 0, skipExist = 0, reuseExist = 0;
 
     toAdd.forEach(item => {
         const code = item.generatedCode;
-        if (existingCodes.has(code)) { skipExist++; return; }
+        // 沿用既有（資料庫已有對應原廠料號）→ 不重新插入
+        if (item.isExisting || existingCodes.has(code)) {
+            if (item.isExisting) reuseExist++;
+            else skipExist++;
+            return;
+        }
         if (seenCodes.has(code)) { skipDup++; return; }
         seenCodes.add(code);
 
@@ -2447,13 +2500,13 @@ async function confirmBom() {
         });
     });
 
-    if (!records.length) {
-        showMsg('所有編碼都已存在資料庫中，無需匯入', 'error', 'bomMsg');
+    if (!records.length && reuseExist === 0 && skipExist === 0) {
+        showMsg('沒有可新增的編碼，請確認品項設定', 'error', 'bomMsg');
         return;
     }
 
     try {
-        await DB.insert(records);
+        if (records.length > 0) await DB.insert(records);
 
         // 儲存 BOM 成品歸屬關係
         const parentMap = loadBomParentMap();
@@ -2479,9 +2532,18 @@ async function confirmBom() {
             saveBomParentMap(parentMap);
         }
 
-        let msg = `成功匯入 ${records.length} 筆新編碼！`;
+        // 儲存原廠料號對照表（供下次匯入使用）
+        const vmap = loadVendorPartMap();
+        toAdd.forEach(item => {
+            if (item.partNo && item.generatedCode) vmap[item.partNo] = item.generatedCode;
+        });
+        saveVendorPartMap(vmap);
+
+        let msg = records.length > 0 ? `成功匯入 ${records.length} 筆新編碼！` : '';
+        if (reuseExist) msg += `（${reuseExist} 筆原廠料號已有對應編碼，直接沿用）`;
         if (skipDup) msg += `（${skipDup} 筆同料號已合併）`;
         if (skipExist) msg += `（${skipExist} 筆已存在已跳過）`;
+        if (!msg) msg = '所有編碼均已沿用既有紀錄，無新增項目';
         showMsg(msg, 'success', 'bomMsg');
         await loadCodes();
         renderTable();
