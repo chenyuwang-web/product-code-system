@@ -623,10 +623,14 @@ const VALID_STATUS = ['啟用', '草稿', '停用', '淘汰'];
 
 // === 本地快取 ===
 let codesCache = [];
+let deletedCodesCache = []; // 軟刪除（回收桶）快取
 
 async function loadCodes() {
     try {
-        codesCache = await DB.select();
+        [codesCache, deletedCodesCache] = await Promise.all([
+            DB.select(),
+            DB.select({ deleted: true })
+        ]);
         setSyncStatus(true);
     } catch (e) {
         console.error('載入失敗:', e);
@@ -673,14 +677,19 @@ function getNextSerial(attr, source, material, grade) {
     return String(next).padStart(4, '0');
 }
 
-// 查詢已存在編碼的詳細資訊（描述、所屬成品）
+// 查詢已存在編碼的詳細資訊（包含回收桶）
 function getExistingCodeInfo(code) {
     const item = codesCache.find(c => c.code === code);
-    if (!item) return null;
-    const parentMap = loadBomParentMap();
-    const parentCode = parentMap[code];
-    const parentItem = parentCode ? codesCache.find(c => c.code === parentCode) : null;
-    return { item, parentCode, parentItem };
+    if (item) {
+        const parentMap = loadBomParentMap();
+        const parentCode = parentMap[code];
+        const parentItem = parentCode ? codesCache.find(c => c.code === parentCode) : null;
+        return { item, parentCode, parentItem, inTrash: false };
+    }
+    // 檢查回收桶
+    const deleted = deletedCodesCache.find(c => c.code === code);
+    if (deleted) return { item: deleted, parentCode: null, parentItem: null, inTrash: true };
+    return null;
 }
 
 function showCodeDetail(code) {
@@ -688,18 +697,35 @@ function showCodeDetail(code) {
     if (!detail) return;
     const info = getExistingCodeInfo(code);
     if (!info) { detail.style.display = 'none'; return; }
-    const { item, parentCode, parentItem } = info;
+    const { item, parentCode, parentItem, inTrash } = info;
     const desc = item.description || '（無描述）';
     const attrLabel = item.attr || '';
-    let parentHtml = '';
-    if (parentCode) {
-        const pDesc = parentItem ? (parentItem.description || '') : '';
-        parentHtml = `<br>📦 所屬成品：<strong style="color:#1a73e8;">${parentCode}</strong>${pDesc ? ` — ${pDesc}` : ''}`;
-    } else if (item.attr !== '成品') {
-        parentHtml = `<br>📦 所屬成品：<span style="color:#e65100;">未歸類</span>`;
+
+    if (inTrash) {
+        // 在回收桶 → 提供還原按鈕
+        detail.innerHTML = `🗑️ <strong>${code}</strong> 目前在<strong style="color:#e65100;">回收桶</strong>中（已被刪除）：
+            <br>🏷️ 屬性：${attrLabel} ／ 描述：${desc}
+            <br><br>
+            <button onclick="restoreCodeFromForm('${code}')"
+                style="padding:6px 18px;background:#1a73e8;color:#fff;border:none;border-radius:6px;font-size:0.88rem;font-weight:700;cursor:pointer;">
+                ♻️ 還原此編碼
+            </button>
+            <span style="font-size:0.8rem;color:#888;margin-left:10px;">還原後可繼續使用，無需重新建立</span>`;
+        detail.style.background = '#fff3e0';
+        detail.style.borderColor = '#ffb74d';
+    } else {
+        let parentHtml = '';
+        if (parentCode) {
+            const pDesc = parentItem ? (parentItem.description || '') : '';
+            parentHtml = `<br>📦 所屬成品：<strong style="color:#1a73e8;">${parentCode}</strong>${pDesc ? ` — ${pDesc}` : ''}`;
+        } else if (item.attr !== '成品') {
+            parentHtml = `<br>📦 所屬成品：<span style="color:#e65100;">未歸類</span>`;
+        }
+        detail.innerHTML = `⚠️ <strong>${code}</strong> 已存在：
+            <br>🏷️ 屬性：${attrLabel} ／ 描述：${desc}${parentHtml}`;
+        detail.style.background = '#fff8e1';
+        detail.style.borderColor = '#ffe082';
     }
-    detail.innerHTML = `⚠️ <strong>${code}</strong> 已存在：
-        <br>🏷️ 屬性：${attrLabel} ／ 描述：${desc}${parentHtml}`;
     detail.style.display = 'block';
 }
 
@@ -721,10 +747,15 @@ function updatePreview() {
         const code = vals.join('') + s.padStart(4, '0');
         document.getElementById('preview').textContent = code;
 
-        // 即時衝突檢查
+        // 即時衝突檢查（含回收桶）
         const exists = codesCache.some(c => c.code === code);
+        const inTrash = !exists && deletedCodesCache.some(c => c.code === code);
         if (exists) {
             showMsg(`編碼 ${code} 已存在，請調整選項`, 'error');
+            showCodeDetail(code);
+            document.getElementById('addBtn').disabled = true;
+        } else if (inTrash) {
+            showMsg(`編碼 ${code} 在回收桶中，請還原而非重新建立`, 'error');
             showCodeDetail(code);
             document.getElementById('addBtn').disabled = true;
         } else {
@@ -1277,7 +1308,22 @@ function renderTable() {
     `;
 
     if (filtered.length === 0) {
-        document.getElementById('tableWrap').innerHTML = `<div class="empty-state">${query ? '找不到符合的編碼' : '尚未新增任何編碼'}</div>`;
+        // 檢查是否在回收桶
+        let emptyMsg = query ? '找不到符合的編碼' : '尚未新增任何編碼';
+        if (query) {
+            const trashHit = deletedCodesCache.filter(c =>
+                c.code.toLowerCase().includes(query) ||
+                (c.description || '').toLowerCase().includes(query)
+            );
+            if (trashHit.length > 0) {
+                const items = trashHit.slice(0, 3).map(c =>
+                    `<strong>${c.code}</strong>${c.description ? ' — ' + c.description : ''}`
+                ).join('、');
+                emptyMsg = `找不到符合的編碼（此查詢結果在🗑回收桶中：${items}）
+                    <br><button onclick="openTrash()" style="margin-top:8px;padding:6px 16px;background:#1a73e8;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.85rem;">開啟回收桶還原</button>`;
+            }
+        }
+        document.getElementById('tableWrap').innerHTML = `<div class="empty-state">${emptyMsg}</div>`;
         return;
     }
 
@@ -2505,6 +2551,21 @@ async function openTrash() {
         m.body.innerHTML = `<div style="padding:20px;color:red;">載入失敗：${e.message}</div>`;
     }
 }
+// 從「產生新編碼」表單的衝突提示直接還原
+async function restoreCodeFromForm(code) {
+    try {
+        const btn = event.target;
+        btn.disabled = true; btn.textContent = '還原中…';
+        await DB.restore(code);
+        await loadCodes();
+        renderTable();
+        hideCodeDetail();
+        document.getElementById('msg').style.display = 'none';
+        resetForm();
+        showMsg(`✓ 編碼 ${code} 已還原，可在清單中查看`, 'success');
+    } catch (e) { alert('還原失敗：' + e.message); }
+}
+
 async function restoreCode(code) {
     if (!confirm(`還原編碼 ${code}？`)) return;
     try {
