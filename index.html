@@ -122,9 +122,18 @@
         .bom-product-body { display: none; padding: 0 12px 12px; }
         .bom-product-body.open { display: block; }
         .bom-sub-group { margin-left: 12px; margin-top: 8px; }
-        .bom-sub-label { font-size: 0.82rem; font-weight: 600; color: #555; margin-bottom: 4px; padding-left: 4px; border-left: 3px solid #1a73e8; }
+        .bom-sub-label { font-size: 0.82rem; font-weight: 600; color: #555; margin-bottom: 4px; padding: 4px 8px 4px 8px; border-left: 3px solid #1a73e8; display: flex; justify-content: space-between; align-items: center; }
         .bom-sub-label.semi { border-left-color: #f9a825; }
         .bom-sub-label.mat { border-left-color: #43a047; }
+        .add-in-group-btn { font-size: 0.78rem; color: #1a73e8; background: #e8f0fe; border: 1px solid #c5d8fb; border-radius: 5px; padding: 2px 10px; cursor: pointer; font-weight: 600; white-space: nowrap; }
+        .add-in-group-btn:hover { background: #d2e3fc; }
+        .quick-add-row { background: #f8f9fa; border: 1px dashed #aac4f5; border-radius: 6px; padding: 10px 12px; margin: 6px 0; display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+        .quick-add-row label { font-size: 0.75rem; color: #555; display: flex; flex-direction: column; gap: 3px; }
+        .quick-add-row select, .quick-add-row input { padding: 5px 8px; border: 1px solid #ddd; border-radius: 5px; font-size: 0.82rem; }
+        .quick-add-row .qa-code-preview { font-family: Consolas, monospace; font-weight: 700; color: #1a73e8; font-size: 0.9rem; background: #e8f0fe; padding: 5px 10px; border-radius: 5px; white-space: nowrap; }
+        .quick-add-confirm { padding: 6px 16px; background: #1a73e8; color: #fff; border: none; border-radius: 5px; font-size: 0.82rem; font-weight: 700; cursor: pointer; }
+        .quick-add-confirm:hover { background: #1558b0; }
+        .quick-add-cancel { padding: 6px 12px; background: #fff; color: #666; border: 1px solid #ddd; border-radius: 5px; font-size: 0.82rem; cursor: pointer; }
         .unassigned-section { border-color: #e0e0e0; }
         .unassigned-section .bom-product-header { background: #f5f5f5; }
         .assign-parent-select { padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 0.78rem; max-width: 160px; }
@@ -1464,16 +1473,34 @@ function renderBomGrouped(sorted, cols, buildHeader, buildRow, renderItems, quer
         html += `<div class="bom-product-body ${isOpen ? 'open' : ''}">`;
 
         // 成品本身的資料列
-        html += `<div class="bom-sub-group"><div class="bom-sub-label">成品</div>${renderItems([product])}</div>`;
+        html += `<div class="bom-sub-group">
+            <div class="bom-sub-label">
+                <span>成品</span>
+                <button class="add-in-group-btn" onclick="showQuickAdd('${pCode}','A')">＋ 新增</button>
+            </div>
+            <div id="quickAdd_${pCode}_A"></div>
+            ${renderItems([product])}
+        </div>`;
 
-        // 半成品
-        if (grp.semi.length > 0) {
-            html += `<div class="bom-sub-group"><div class="bom-sub-label semi">半成品（${grp.semi.length}）</div>${renderItems(grp.semi)}</div>`;
-        }
-        // 物料
-        if (grp.mat.length > 0) {
-            html += `<div class="bom-sub-group"><div class="bom-sub-label mat">物料（${grp.mat.length}）</div>${renderItems(grp.mat)}</div>`;
-        }
+        // 半成品（永遠顯示，含新增按鈕）
+        html += `<div class="bom-sub-group">
+            <div class="bom-sub-label semi">
+                <span>半成品${grp.semi.length > 0 ? `（${grp.semi.length}）` : ''}</span>
+                <button class="add-in-group-btn" onclick="showQuickAdd('${pCode}','B')">＋ 新增</button>
+            </div>
+            <div id="quickAdd_${pCode}_B"></div>
+            ${grp.semi.length > 0 ? renderItems(grp.semi) : ''}
+        </div>`;
+
+        // 物料（永遠顯示，含新增按鈕）
+        html += `<div class="bom-sub-group">
+            <div class="bom-sub-label mat">
+                <span>物料${grp.mat.length > 0 ? `（${grp.mat.length}）` : ''}</span>
+                <button class="add-in-group-btn" onclick="showQuickAdd('${pCode}','C')">＋ 新增</button>
+            </div>
+            <div id="quickAdd_${pCode}_C"></div>
+            ${grp.mat.length > 0 ? renderItems(grp.mat) : ''}
+        </div>`;
 
         html += '</div></div>';
     });
@@ -1522,6 +1549,124 @@ function renderUnassignedTable(items, cols, buildHeader, buildRow) {
     });
 
     return `<table><thead><tr>${headerH}</tr></thead><tbody>${tbody}</tbody></table>`;
+}
+
+// === BOM 群組內快速新增 ===
+function showQuickAdd(parentCode, attrCode) {
+    // 關閉其他已開啟的快速新增表單
+    document.querySelectorAll('.quick-add-row').forEach(el => {
+        const p = el.closest('[id^="quickAdd_"]');
+        if (p) p.innerHTML = '';
+    });
+
+    const containerId = `quickAdd_${parentCode}_${attrCode}`;
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    const materialOptions = VALID_MATERIAL.map(m =>
+        `<option value="${m}">${m} - ${MATERIAL_LABEL[m]}</option>`).join('');
+
+    container.innerHTML = `
+    <div class="quick-add-row" id="qaRow_${parentCode}_${attrCode}">
+        <label>來源
+            <select id="qa_source_${parentCode}_${attrCode}" onchange="updateQaPreview('${parentCode}','${attrCode}')">
+                <option value="">--</option>
+                <option value="1">1 自製</option>
+                <option value="2">2 客供</option>
+                <option value="3">3 外購</option>
+            </select>
+        </label>
+        <label>物料類型
+            <select id="qa_mat_${parentCode}_${attrCode}" onchange="updateQaPreview('${parentCode}','${attrCode}')">
+                <option value="">--</option>
+                ${materialOptions}
+            </select>
+        </label>
+        <label>品別
+            <select id="qa_grade_${parentCode}_${attrCode}" onchange="updateQaPreview('${parentCode}','${attrCode}')">
+                <option value="">--</option>
+                <option value="N">N 新品</option>
+                <option value="R">R 維修品</option>
+            </select>
+        </label>
+        <label>描述（選填）
+            <input type="text" id="qa_desc_${parentCode}_${attrCode}" placeholder="產品描述" style="width:150px;">
+        </label>
+        <span class="qa-code-preview" id="qa_preview_${parentCode}_${attrCode}" style="color:#999;">選欄位後預覽</span>
+        <button class="quick-add-confirm" onclick="submitQuickAdd('${parentCode}','${attrCode}')">新增</button>
+        <button class="quick-add-cancel" onclick="cancelQuickAdd('${parentCode}','${attrCode}')">取消</button>
+    </div>`;
+    container.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function updateQaPreview(parentCode, attrCode) {
+    const src   = document.getElementById(`qa_source_${parentCode}_${attrCode}`)?.value;
+    const mat   = document.getElementById(`qa_mat_${parentCode}_${attrCode}`)?.value;
+    const grade = document.getElementById(`qa_grade_${parentCode}_${attrCode}`)?.value;
+    const prev  = document.getElementById(`qa_preview_${parentCode}_${attrCode}`);
+    if (!prev) return;
+    if (src && mat && grade) {
+        const serial = getNextSerial(attrCode, src, mat, grade);
+        prev.textContent = attrCode + src + mat + grade + String(serial).padStart(4, '0');
+        prev.style.color = '#1a73e8';
+    } else {
+        prev.textContent = '選欄位後預覽';
+        prev.style.color = '#999';
+    }
+}
+
+function cancelQuickAdd(parentCode, attrCode) {
+    const container = document.getElementById(`quickAdd_${parentCode}_${attrCode}`);
+    if (container) container.innerHTML = '';
+}
+
+async function submitQuickAdd(parentCode, attrCode) {
+    const src   = document.getElementById(`qa_source_${parentCode}_${attrCode}`)?.value;
+    const mat   = document.getElementById(`qa_mat_${parentCode}_${attrCode}`)?.value;
+    const grade = document.getElementById(`qa_grade_${parentCode}_${attrCode}`)?.value;
+    const desc  = (document.getElementById(`qa_desc_${parentCode}_${attrCode}`)?.value || '').trim();
+
+    if (!src || !mat || !grade) {
+        showListMsg('⚠ 請選擇來源、物料類型和品別', 'error'); return;
+    }
+
+    const serial = getNextSerial(attrCode, src, mat, grade);
+    const code = attrCode + src + mat + grade + String(serial).padStart(4, '0');
+
+    if (codesCache.some(c => c.code === code)) {
+        showListMsg(`⚠ 編碼 ${code} 已存在，請重新選擇`, 'error'); return;
+    }
+
+    const confirmBtn = document.querySelector(`#qaRow_${parentCode}_${attrCode} .quick-add-confirm`);
+    if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = '新增中…'; }
+
+    try {
+        const record = {
+            code,
+            attr: ATTR_LABEL[attrCode],
+            source: SOURCE_LABEL[src],
+            material_code: mat,
+            material: MATERIAL_LABEL[mat],
+            grade: GRADE_LABEL[grade],
+            description: desc
+        };
+        await DB.insert(record);
+
+        // 若非成品，綁定到所屬成品
+        if (attrCode !== 'A' && parentCode) {
+            const map = loadBomParentMap();
+            map[code] = parentCode;
+            saveBomParentMap(map);
+        }
+
+        await loadCodes();
+        openGroups.add('bom_' + parentCode); // 保持群組展開
+        showListMsg(`✓ 編碼 ${code} 已新增！`, 'success');
+        renderTable();
+    } catch (err) {
+        showListMsg(`新增失敗：${err.message || err}`, 'error');
+        if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '新增'; }
+    }
 }
 
 function buildPager(page, totalPages, totalItems) {
