@@ -273,6 +273,40 @@
         </div>
     </div>
 
+    <!-- 客供費用倉編碼 -->
+    <div class="card">
+        <h2>客供費用倉編碼（B 碼）</h2>
+        <p style="font-size:0.85rem;color:#666;margin-bottom:16px;">格式：<strong>B</strong>（客供費用倉）＋ <strong>物料類型（1碼）</strong> ＋ <strong>流水號（5碼）</strong>，共 <strong>7 碼</strong></p>
+        <div class="form-grid">
+            <div class="form-group">
+                <label>物料類型</label>
+                <select id="expMat" onchange="updateExpPreview()">
+                    <option value="">-- 請選擇 --</option>
+                    <option value="T">T - 端子／接頭類（壓著端子、插針、連接器）</option>
+                    <option value="C">C - 線材／束線類（束帶、整線管、電線）</option>
+                    <option value="S">S - 焊接／耗材類（焊錫絲、錫膏、助焊劑）</option>
+                    <option value="H">H - 五金／緊固類（螺絲、螺帽、華司、彈簧）</option>
+                    <option value="P">P - 包裝／保護類（氣泡袋、靜電袋、PE袋、紙箱）</option>
+                    <option value="M">M - 化學／膠類（散熱膏、AB膠、螺絲膠、清潔劑）</option>
+                    <option value="O">O - 其他雜項（擦拭紙、棉把、手套、無塵布）</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>產品描述（選填）</label>
+                <input type="text" id="expDesc" placeholder="例如：M4×10不鏽鋼螺絲">
+            </div>
+        </div>
+        <div class="preview-box">
+            <div class="label">編碼預覽</div>
+            <div class="code" id="expPreview">------</div>
+        </div>
+        <div id="expMsg" class="msg"></div>
+        <div class="btn-row">
+            <button class="btn btn-primary" id="expAddBtn" onclick="addExpenseCode()" disabled>確認新增</button>
+            <button class="btn btn-secondary" onclick="resetExpForm()">清除重填</button>
+        </div>
+    </div>
+
     <!-- 批次匯入 -->
     <div class="card">
         <h2>批次匯入既有編碼</h2>
@@ -654,6 +688,9 @@ const VALID_MATERIAL = ['ELE','PNE','MEC','PAC','PLA','CHE','FAS','TRA','RUB','C
 const VALID_GRADE = ['N','R'];
 
 const ATTR_LABEL = {A:'成品',B:'半成品',C:'物料'};
+// 客供費用倉 B碼
+const EXPENSE_MAT_LABEL = {T:'端子/接頭類',C:'線材/束線類',S:'焊接/耗材類',H:'五金/緊固類',P:'包裝/保護類',M:'化學/膠類',O:'其他雜項'};
+const VALID_EXPENSE_MAT = ['T','C','S','H','P','M','O'];
 const SOURCE_LABEL = {'1':'自製','2':'客供','3':'外購'};
 const GRADE_LABEL = {N:'新品',R:'維修品'};
 const MATERIAL_LABEL = {ELE:'電子電控類',PNE:'氣動氣路類',MEC:'金屬材料/加工件類',PAC:'包裝/紙材類',PLA:'塑膠原料類',CHE:'化學耗材類',FAS:'標準鎖附五金類',TRA:'傳動元件類',RUB:'橡膠/矽膠類',CAB:'線材/線纜類',OPT:'光學元件類',CON:'一般耗材類',RSP:'Reticle SMIF Pod',FOS:'Front Opening Shipping Box',LMB:'Large Mask Box',FOU:'Front Opening Unified Pod',OVT:'Oval Tube',ARS:'Automatic RSP Assembly Machine',ANJ:'Automatic Night Jar Measurement System',OHB:'Overhead Hoist Buffer',AOI:'Automated Optical Inspection'};
@@ -833,6 +870,83 @@ function resetForm() {
     document.getElementById('serial').placeholder = '自動帶入下一個可用號碼';
     document.getElementById('msg').style.display = 'none';
     hideCodeDetail();
+}
+
+// === 客供費用倉 B碼 ===
+function getNextExpenseSerial(matType) {
+    const prefix = 'B' + matType;
+    const used = codesCache
+        .filter(c => c.code.startsWith(prefix) && c.code.length === 7)
+        .map(c => parseInt(c.code.slice(-5)))
+        .filter(n => !isNaN(n))
+        .sort((a, b) => a - b);
+    let next = 1;
+    for (const n of used) { if (n === next) next++; else break; }
+    return String(next).padStart(5, '0');
+}
+
+function updateExpPreview() {
+    const mat = document.getElementById('expMat').value;
+    const msgEl = document.getElementById('expMsg');
+    if (!mat) {
+        document.getElementById('expPreview').textContent = '------';
+        document.getElementById('expAddBtn').disabled = true;
+        msgEl.style.display = 'none';
+        return;
+    }
+    const serial = getNextExpenseSerial(mat);
+    const code = 'B' + mat + serial;
+    document.getElementById('expPreview').textContent = code;
+
+    const exists = codesCache.some(c => c.code === code);
+    if (exists) {
+        showMsg(`編碼 ${code} 已存在`, 'error', 'expMsg');
+        document.getElementById('expAddBtn').disabled = true;
+    } else {
+        msgEl.style.display = 'none';
+        document.getElementById('expAddBtn').disabled = false;
+    }
+}
+
+async function addExpenseCode() {
+    const mat  = document.getElementById('expMat').value;
+    const desc = document.getElementById('expDesc').value.trim();
+    if (!mat) { showMsg('請選擇物料類型', 'error', 'expMsg'); return; }
+
+    const serial = getNextExpenseSerial(mat);
+    const code = 'B' + mat + serial;
+
+    if (codesCache.some(c => c.code === code)) {
+        showMsg(`編碼 ${code} 已存在`, 'error', 'expMsg'); return;
+    }
+
+    document.getElementById('expAddBtn').disabled = true;
+    try {
+        await DB.insert({
+            code,
+            attr: '客供費用倉',
+            source: '客供',
+            material_code: mat,
+            material: EXPENSE_MAT_LABEL[mat],
+            grade: '-',
+            description: desc
+        });
+        showMsg(`✓ 編碼 ${code} 新增成功！`, 'success', 'expMsg');
+        resetExpForm();
+        await loadCodes();
+        renderTable();
+    } catch(e) {
+        showMsg('新增失敗：' + (e.message || e), 'error', 'expMsg');
+        document.getElementById('expAddBtn').disabled = false;
+    }
+}
+
+function resetExpForm() {
+    document.getElementById('expMat').value = '';
+    document.getElementById('expDesc').value = '';
+    document.getElementById('expPreview').textContent = '------';
+    document.getElementById('expAddBtn').disabled = true;
+    document.getElementById('expMsg').style.display = 'none';
 }
 
 async function deleteCode(code) {
@@ -1302,11 +1416,13 @@ function renderTable() {
         ? codes.filter(c => c.code.toLowerCase().includes(query) || (c.description && c.description.toLowerCase().includes(query)))
         : codes;
 
+    const expCount = codes.filter(c=>c.attr==='客供費用倉').length;
     document.getElementById('stats').innerHTML = `
         <div class="stat-item">總編碼數 <strong>${codes.length}</strong></div>
         <div class="stat-item">成品 <strong>${codes.filter(c=>c.attr==='成品').length}</strong></div>
         <div class="stat-item">半成品 <strong>${codes.filter(c=>c.attr==='半成品').length}</strong></div>
         <div class="stat-item">物料 <strong>${codes.filter(c=>c.attr==='物料').length}</strong></div>
+        ${expCount > 0 ? `<div class="stat-item">客供費用倉 <strong>${expCount}</strong></div>` : ''}
     `;
 
     if (filtered.length === 0) {
