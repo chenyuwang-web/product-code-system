@@ -292,6 +292,12 @@
                 </select>
             </div>
             <div class="form-group">
+                <label>所屬成品（選填）</label>
+                <select id="expParent">
+                    <option value="">-- 不指定 --</option>
+                </select>
+            </div>
+            <div class="form-group" style="grid-column:1/-1;">
                 <label>產品描述（選填）</label>
                 <input type="text" id="expDesc" placeholder="例如：M4×10不鏽鋼螺絲">
             </div>
@@ -885,7 +891,17 @@ function getNextExpenseSerial(matType) {
     return String(next).padStart(5, '0');
 }
 
+function populateExpParent() {
+    const sel = document.getElementById('expParent');
+    if (!sel) return;
+    const cur = sel.value;
+    const products = codesCache.filter(c => c.attr === '成品');
+    sel.innerHTML = '<option value="">-- 不指定 --</option>' +
+        products.map(p => `<option value="${p.code}" ${cur===p.code?'selected':''}>${p.code}${p.description ? ' — ' + p.description.substring(0,30) : ''}</option>`).join('');
+}
+
 function updateExpPreview() {
+    populateExpParent();
     const mat = document.getElementById('expMat').value;
     const msgEl = document.getElementById('expMsg');
     if (!mat) {
@@ -909,8 +925,9 @@ function updateExpPreview() {
 }
 
 async function addExpenseCode() {
-    const mat  = document.getElementById('expMat').value;
-    const desc = document.getElementById('expDesc').value.trim();
+    const mat    = document.getElementById('expMat').value;
+    const desc   = document.getElementById('expDesc').value.trim();
+    const parent = document.getElementById('expParent').value;
     if (!mat) { showMsg('請選擇物料類型', 'error', 'expMsg'); return; }
 
     const serial = getNextExpenseSerial(mat);
@@ -922,7 +939,7 @@ async function addExpenseCode() {
 
     document.getElementById('expAddBtn').disabled = true;
     try {
-        await DB.insert({
+        const record = {
             code,
             attr: '客供費用倉',
             source: '客供',
@@ -930,8 +947,11 @@ async function addExpenseCode() {
             material: EXPENSE_MAT_LABEL[mat],
             grade: '-',
             description: desc
-        });
-        showMsg(`✓ 編碼 ${code} 新增成功！`, 'success', 'expMsg');
+        };
+        if (parent) record.parent_code = parent;
+        await DB.insert(record);
+        const parentHint = parent ? `，已歸屬至 ${parent}` : '';
+        showMsg(`✓ 編碼 ${code} 新增成功${parentHint}！`, 'success', 'expMsg');
         resetExpForm();
         await loadCodes();
         renderTable();
@@ -944,6 +964,7 @@ async function addExpenseCode() {
 function resetExpForm() {
     document.getElementById('expMat').value = '';
     document.getElementById('expDesc').value = '';
+    document.getElementById('expParent').value = '';
     document.getElementById('expPreview').textContent = '------';
     document.getElementById('expAddBtn').disabled = true;
     document.getElementById('expMsg').style.display = 'none';
@@ -2905,6 +2926,7 @@ if ('serviceWorker' in navigator) {
         // 一次性遷移：localStorage 的舊 BOM 歸屬 → DB parent_code
         await migrateBomMapToDb();
         await autoDetectBomGroups();
+        populateExpParent();
         renderTable();
     } catch (e) {
         document.getElementById('loadingOverlay').textContent = '載入失敗：' + e.message;
