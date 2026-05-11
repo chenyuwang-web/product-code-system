@@ -125,6 +125,11 @@
         .bom-sub-label { font-size: 0.82rem; font-weight: 600; color: #555; margin-bottom: 4px; padding: 4px 8px 4px 8px; border-left: 3px solid #1a73e8; display: flex; justify-content: space-between; align-items: center; }
         .bom-sub-label.semi { border-left-color: #f9a825; }
         .bom-sub-label.mat { border-left-color: #43a047; }
+        .bom-semi-item { margin-bottom: 2px; }
+        .bom-semi-children { margin-left: 22px; border-left: 2px solid #43a047; padding-left: 8px; margin-top: 2px; display: none; }
+        .bom-semi-children.open { display: block; }
+        .semi-toggle-arrow { cursor: pointer; padding: 0 6px; color: #f9a825; font-size: 0.72rem; transition: transform 0.2s; display: inline-block; user-select: none; flex-shrink: 0; }
+        .semi-toggle-arrow.open { transform: rotate(90deg); }
         .add-in-group-btn { font-size: 0.78rem; color: #1a73e8; background: #e8f0fe; border: 1px solid #c5d8fb; border-radius: 5px; padding: 2px 10px; cursor: pointer; font-weight: 600; white-space: nowrap; }
         .add-in-group-btn:hover { background: #d2e3fc; }
         .quick-add-row { background: #f8f9fa; border: 1px dashed #aac4f5; border-radius: 6px; padding: 10px 12px; margin: 6px 0; display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
@@ -1644,6 +1649,38 @@ function renderTable() {
     updateSelectedBtn();
 }
 
+// === 半成品可展開子項渲染 ===
+function renderSemiWithChildren(semiList, buildHeader, buildRow, renderItems) {
+    let html = '';
+    semiList.forEach(semi => {
+        const semiKey = 'semi_' + semi.code;
+        const semiIsOpen = openGroups.has(semiKey);
+        const semiChildren = codesCache.filter(c => c.parent_code === semi.code);
+
+        html += `<div class="bom-semi-item">`;
+        html += `<div style="display:flex;align-items:flex-start;">
+            <span class="semi-toggle-arrow ${semiIsOpen ? 'open' : ''}"
+                onclick="toggleGroup('${semiKey}')"
+                title="點擊展開／收合下一階物料">&#9654;</span>
+            <div style="flex:1;overflow-x:auto;">
+                <table style="margin:0;"><thead><tr>${buildHeader()}</tr></thead><tbody>${buildRow(semi)}</tbody></table>
+            </div>
+        </div>`;
+
+        html += `<div class="bom-semi-children ${semiIsOpen ? 'open' : ''}">
+            <div class="bom-sub-label mat" style="font-size:0.78rem;">
+                <span>下一階物料${semiChildren.length > 0 ? `（${semiChildren.length}）` : ''}</span>
+                <button class="add-in-group-btn" onclick="showQuickAdd('${semi.code}','C')">＋ 新增子項</button>
+            </div>
+            <div id="quickAdd_${semi.code}_C"></div>
+            ${semiChildren.length > 0 ? renderItems(semiChildren) : '<p style="color:#aaa;font-size:0.8rem;padding:4px 10px;margin:0;">尚無子項物料</p>'}
+        </div>`;
+
+        html += `</div>`;
+    });
+    return html;
+}
+
 // === 依成品 BOM 分類渲染 ===
 function renderBomGrouped(sorted, cols, buildHeader, buildRow, renderItems, query) {
     const parentMap = loadBomParentMap();
@@ -1659,6 +1696,9 @@ function renderBomGrouped(sorted, cols, buildHeader, buildRow, renderItems, quer
     const allProducts = codesCache.filter(c => c.attr === '成品');
     const productCodes = new Set(allProducts.map(c => c.code));
 
+    // 找出所有半成品 code 集合（供判斷下層物料的父層）
+    const semiCodes = new Set(codesCache.filter(c => c.attr === '半成品').map(c => c.code));
+
     // 依 parentMap 分類
     sorted.forEach(c => {
         const parent = parentMap[c.code];
@@ -1667,6 +1707,9 @@ function renderBomGrouped(sorted, cols, buildHeader, buildRow, renderItems, quer
             if (c.code === parent) return; // 成品本身不重複加入
             if (c.attr === '半成品') productGroups[parent].semi.push(c);
             else productGroups[parent].mat.push(c);
+            assigned.add(c.code);
+        } else if (parent && semiCodes.has(parent)) {
+            // 父層是半成品 → 標記為已歸類（不出現在未歸類區）
             assigned.add(c.code);
         }
     });
@@ -1727,7 +1770,7 @@ function renderBomGrouped(sorted, cols, buildHeader, buildRow, renderItems, quer
                 <button class="add-in-group-btn" onclick="showQuickAdd('${pCode}','B')">＋ 新增</button>
             </div>
             <div id="quickAdd_${pCode}_B"></div>
-            ${grp.semi.length > 0 ? renderItems(grp.semi) : ''}
+            ${grp.semi.length > 0 ? renderSemiWithChildren(grp.semi, buildHeader, buildRow, renderItems) : ''}
         </div>`;
 
         // 物料（永遠顯示，含新增按鈕）
@@ -1888,17 +1931,19 @@ async function submitQuickAdd(parentCode, attrCode) {
             grade: GRADE_LABEL[grade],
             description: desc
         };
+        if (attrCode !== 'A' && parentCode) record.parent_code = parentCode;
         await DB.insert(record);
 
-        // 若非成品，綁定到所屬成品
-        if (attrCode !== 'A' && parentCode) {
-            const map = loadBomParentMap();
-            map[code] = parentCode;
-            saveBomParentMap(map);
-        }
-
         await loadCodes();
-        openGroups.add('bom_' + parentCode); // 保持群組展開
+
+        // 保持群組展開（父層為半成品時，同時展開其上層成品群組）
+        const parentItem = codesCache.find(c => c.code === parentCode);
+        if (parentItem && parentItem.attr === '半成品') {
+            openGroups.add('semi_' + parentCode);
+            if (parentItem.parent_code) openGroups.add('bom_' + parentItem.parent_code);
+        } else {
+            openGroups.add('bom_' + parentCode);
+        }
         showListMsg(`✓ 編碼 ${code} 已新增！`, 'success');
         renderTable();
     } catch (err) {
