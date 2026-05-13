@@ -1653,20 +1653,11 @@ function renderSemiWithChildren(semiList, productCode, buildHeader, buildRow, re
     semiList.forEach(semi => {
         const semiChildren = codesCache.filter(c => c.parent_code === semi.code);
 
-        // 半成品行本身 + 對成品的使用數量
-        const semiQty = getBomQty(productCode, semi.code);
-        const semiQtyTd = `<td style="text-align:center;padding:6px 4px;">
-            <input type="number" min="1" value="${semiQty}"
-                style="width:52px;padding:3px 4px;border:1px solid #ddd;border-radius:5px;text-align:center;font-size:0.88rem;font-weight:600;color:#1a73e8;"
-                onchange="setBomQty('${productCode}','${semi.code}',this.value,this)"
-                onkeydown="if(event.key==='Enter')this.blur()"
-                title="此半成品在成品中的使用數量">
-        </td>`;
-        const semiQtyTh = `<th style="text-align:center;width:62px;white-space:nowrap;">使用數量</th>`;
-        const semiRow = buildRow(semi).replace('</tr>', semiQtyTd + '</tr>');
+        // 半成品行本身 + 對成品的數量＋單位
+        const semiRow = buildRow(semi).replace('</tr>', buildQtyUnitTds(productCode, semi.code) + '</tr>');
 
         html += `<div class="bom-semi-item">`;
-        html += `<table style="margin:0;"><thead><tr>${buildHeader()}${semiQtyTh}</tr></thead><tbody>${semiRow}</tbody></table>`;
+        html += BOM_UNIT_DATALIST + `<table style="margin:0;"><thead><tr>${buildHeader()}${QTY_UNIT_TH}</tr></thead><tbody>${semiRow}</tbody></table>`;
 
         // 半成品下的物料 + 對半成品的使用數量
         html += `<div class="bom-semi-children">
@@ -1837,8 +1828,8 @@ function renderUnassignedTable(items, cols, buildHeader, buildRow) {
 }
 
 // === BOM 使用數量（localStorage） ===
-function loadQtyMap() { return JSON.parse(localStorage.getItem('bomQtyMap') || '{}'); }
-function saveQtyMap(m) { localStorage.setItem('bomQtyMap', JSON.stringify(m)); }
+function loadQtyMap()  { return JSON.parse(localStorage.getItem('bomQtyMap')  || '{}'); }
+function saveQtyMap(m) { localStorage.setItem('bomQtyMap',  JSON.stringify(m)); }
 function getBomQty(parentCode, childCode) {
     return loadQtyMap()[parentCode + '|' + childCode] || 1;
 }
@@ -1848,31 +1839,58 @@ function setBomQty(parentCode, childCode, qty, inputEl) {
     const m = loadQtyMap();
     m[parentCode + '|' + childCode] = v;
     saveQtyMap(m);
-    if (inputEl) {
-        inputEl.style.borderColor = '#4caf50';
-        setTimeout(() => { if (inputEl) inputEl.style.borderColor = '#ddd'; }, 1200);
-    }
+    if (inputEl) { inputEl.style.borderColor = '#4caf50'; setTimeout(() => { if (inputEl) inputEl.style.borderColor = '#ddd'; }, 1200); }
 }
 
-// 含「使用數量」欄的 BOM 子項目表格
-// parentCode: 父層編碼（用於查詢數量），skipQty: 成品本身不需數量欄
+// 單位 map（以 item code 為 key，與父層無關）
+function loadUnitMap()  { return JSON.parse(localStorage.getItem('bomUnitMap') || '{}'); }
+function saveUnitMap(m) { localStorage.setItem('bomUnitMap', JSON.stringify(m)); }
+function getBomUnit(code) { return loadUnitMap()[code] || ''; }
+function setBomUnit(code, unit, inputEl) {
+    const m = loadUnitMap();
+    m[code] = unit.trim();
+    saveUnitMap(m);
+    if (inputEl) { inputEl.style.borderColor = '#4caf50'; setTimeout(() => { if (inputEl) inputEl.style.borderColor = '#ddd'; }, 1200); }
+}
+
+// 常用單位 datalist（供所有單位輸入框共用）
+const BOM_UNIT_DATALIST = `<datalist id="bomUnitList">
+    <option value="PCS"><option value="EA"><option value="SET">
+    <option value="M"><option value="MM"><option value="CM">
+    <option value="KG"><option value="G"><option value="L"><option value="ML">
+    <option value="捲"><option value="包"><option value="箱"><option value="組"><option value="條"><option value="片">
+</datalist>`;
+
+// 組合一個「數量 + 單位」td 對
+function buildQtyUnitTds(parentCode, childCode) {
+    const qty  = getBomQty(parentCode, childCode);
+    const unit = getBomUnit(childCode);
+    return `
+    <td style="text-align:center;padding:6px 2px;white-space:nowrap;">
+        <input type="number" min="1" value="${qty}"
+            style="width:50px;padding:3px 4px;border:1px solid #ddd;border-radius:5px;text-align:center;font-size:0.88rem;font-weight:600;color:#1a73e8;"
+            onchange="setBomQty('${parentCode}','${childCode}',this.value,this)"
+            onkeydown="if(event.key==='Enter')this.blur()" title="使用數量">
+    </td>
+    <td style="text-align:center;padding:6px 2px;">
+        <input type="text" value="${unit}" list="bomUnitList" maxlength="6" placeholder="單位"
+            style="width:52px;padding:3px 4px;border:1px solid #ddd;border-radius:5px;text-align:center;font-size:0.85rem;"
+            onchange="setBomUnit('${childCode}',this.value,this)"
+            onkeydown="if(event.key==='Enter')this.blur()" title="單位（如 PCS、EA、SET）">
+    </td>`;
+}
+const QTY_UNIT_TH = `<th style="text-align:center;width:54px;white-space:nowrap;">數量</th><th style="text-align:center;width:58px;white-space:nowrap;">單位</th>`;
+
+// 含「數量＋單位」欄的 BOM 子項目表格
 function renderBomSubItems(items, parentCode, buildHeader, buildRow, skipQty) {
     if (items.length === 0) return '';
-    const qtyTh = skipQty ? '' : `<th style="text-align:center;width:62px;white-space:nowrap;">使用數量</th>`;
+    const extraTh = skipQty ? '' : QTY_UNIT_TH;
     const rows = items.map(c => {
         const base = buildRow(c);
         if (skipQty) return base;
-        const qty = getBomQty(parentCode, c.code);
-        const qtyTd = `<td style="text-align:center;padding:6px 4px;">
-            <input type="number" min="1" value="${qty}"
-                style="width:52px;padding:3px 4px;border:1px solid #ddd;border-radius:5px;text-align:center;font-size:0.88rem;font-weight:600;color:#1a73e8;"
-                onchange="setBomQty('${parentCode}','${c.code}',this.value,this)"
-                onkeydown="if(event.key==='Enter')this.blur()"
-                title="此料號在本成品中的使用數量">
-        </td>`;
-        return base.replace('</tr>', qtyTd + '</tr>');
+        return base.replace('</tr>', buildQtyUnitTds(parentCode, c.code) + '</tr>');
     }).join('');
-    return `<table><thead><tr>${buildHeader()}${qtyTh}</tr></thead><tbody>${rows}</tbody></table>`;
+    return BOM_UNIT_DATALIST + `<table><thead><tr>${buildHeader()}${extraTh}</tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 // === BOM 群組內快速新增 ===
