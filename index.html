@@ -1646,22 +1646,38 @@ function renderTable() {
     updateSelectedBtn();
 }
 
-// === 半成品可展開子項渲染 ===
-function renderSemiWithChildren(semiList, buildHeader, buildRow, renderItems) {
+// === 半成品可展開子項渲染（含數量欄）===
+// productCode: 該半成品所屬的成品編碼
+function renderSemiWithChildren(semiList, productCode, buildHeader, buildRow, renderItems) {
     let html = '';
     semiList.forEach(semi => {
         const semiChildren = codesCache.filter(c => c.parent_code === semi.code);
 
-        html += `<div class="bom-semi-item">`;
-        html += `<table style="margin:0;"><thead><tr>${buildHeader()}</tr></thead><tbody>${buildRow(semi)}</tbody></table>`;
+        // 半成品行本身 + 對成品的使用數量
+        const semiQty = getBomQty(productCode, semi.code);
+        const semiQtyTd = `<td style="text-align:center;padding:6px 4px;">
+            <input type="number" min="1" value="${semiQty}"
+                style="width:52px;padding:3px 4px;border:1px solid #ddd;border-radius:5px;text-align:center;font-size:0.88rem;font-weight:600;color:#1a73e8;"
+                onchange="setBomQty('${productCode}','${semi.code}',this.value,this)"
+                onkeydown="if(event.key==='Enter')this.blur()"
+                title="此半成品在成品中的使用數量">
+        </td>`;
+        const semiQtyTh = `<th style="text-align:center;width:62px;white-space:nowrap;">使用數量</th>`;
+        const semiRow = buildRow(semi).replace('</tr>', semiQtyTd + '</tr>');
 
+        html += `<div class="bom-semi-item">`;
+        html += `<table style="margin:0;"><thead><tr>${buildHeader()}${semiQtyTh}</tr></thead><tbody>${semiRow}</tbody></table>`;
+
+        // 半成品下的物料 + 對半成品的使用數量
         html += `<div class="bom-semi-children">
             <div class="bom-sub-label mat" style="font-size:0.78rem;">
                 <span>物料${semiChildren.length > 0 ? `（${semiChildren.length}）` : ''}</span>
                 <button class="add-in-group-btn" onclick="showQuickAdd('${semi.code}','C')">＋ 新增</button>
             </div>
             <div id="quickAdd_${semi.code}_C"></div>
-            ${semiChildren.length > 0 ? renderItems(semiChildren) : '<p style="color:#aaa;font-size:0.8rem;padding:4px 10px;margin:0;">尚無物料</p>'}
+            ${semiChildren.length > 0
+                ? renderBomSubItems(semiChildren, semi.code, buildHeader, buildRow, false)
+                : '<p style="color:#aaa;font-size:0.8rem;padding:4px 10px;margin:0;">尚無物料</p>'}
         </div>`;
 
         html += `</div>`;
@@ -1741,34 +1757,34 @@ function renderBomGrouped(sorted, cols, buildHeader, buildRow, renderItems, quer
         </div>`;
         html += `<div class="bom-product-body ${isOpen ? 'open' : ''}">`;
 
-        // 成品本身的資料列
+        // 成品本身（不顯示數量欄）
         html += `<div class="bom-sub-group">
             <div class="bom-sub-label">
                 <span>成品</span>
                 <button class="add-in-group-btn" onclick="showQuickAdd('${pCode}','A')">＋ 新增</button>
             </div>
             <div id="quickAdd_${pCode}_A"></div>
-            ${renderItems([product])}
+            ${renderBomSubItems([product], pCode, buildHeader, buildRow, true)}
         </div>`;
 
-        // 半成品（永遠顯示，含新增按鈕）
+        // 半成品（各自展開子物料，含對成品的使用數量）
         html += `<div class="bom-sub-group">
             <div class="bom-sub-label semi">
                 <span>半成品${grp.semi.length > 0 ? `（${grp.semi.length}）` : ''}</span>
                 <button class="add-in-group-btn" onclick="showQuickAdd('${pCode}','B')">＋ 新增</button>
             </div>
             <div id="quickAdd_${pCode}_B"></div>
-            ${grp.semi.length > 0 ? renderSemiWithChildren(grp.semi, buildHeader, buildRow, renderItems) : ''}
+            ${grp.semi.length > 0 ? renderSemiWithChildren(grp.semi, pCode, buildHeader, buildRow, renderItems) : ''}
         </div>`;
 
-        // 物料（永遠顯示，含新增按鈕）
+        // 物料（直屬成品，含對成品的使用數量）
         html += `<div class="bom-sub-group">
             <div class="bom-sub-label mat">
                 <span>物料${grp.mat.length > 0 ? `（${grp.mat.length}）` : ''}</span>
                 <button class="add-in-group-btn" onclick="showQuickAdd('${pCode}','C')">＋ 新增</button>
             </div>
             <div id="quickAdd_${pCode}_C"></div>
-            ${grp.mat.length > 0 ? renderItems(grp.mat) : ''}
+            ${grp.mat.length > 0 ? renderBomSubItems(grp.mat, pCode, buildHeader, buildRow, false) : ''}
         </div>`;
 
         html += '</div></div>';
@@ -1818,6 +1834,45 @@ function renderUnassignedTable(items, cols, buildHeader, buildRow) {
     });
 
     return `<table><thead><tr>${headerH}</tr></thead><tbody>${tbody}</tbody></table>`;
+}
+
+// === BOM 使用數量（localStorage） ===
+function loadQtyMap() { return JSON.parse(localStorage.getItem('bomQtyMap') || '{}'); }
+function saveQtyMap(m) { localStorage.setItem('bomQtyMap', JSON.stringify(m)); }
+function getBomQty(parentCode, childCode) {
+    return loadQtyMap()[parentCode + '|' + childCode] || 1;
+}
+function setBomQty(parentCode, childCode, qty, inputEl) {
+    const v = parseInt(qty);
+    if (isNaN(v) || v < 1) { if (inputEl) inputEl.value = getBomQty(parentCode, childCode); return; }
+    const m = loadQtyMap();
+    m[parentCode + '|' + childCode] = v;
+    saveQtyMap(m);
+    if (inputEl) {
+        inputEl.style.borderColor = '#4caf50';
+        setTimeout(() => { if (inputEl) inputEl.style.borderColor = '#ddd'; }, 1200);
+    }
+}
+
+// 含「使用數量」欄的 BOM 子項目表格
+// parentCode: 父層編碼（用於查詢數量），skipQty: 成品本身不需數量欄
+function renderBomSubItems(items, parentCode, buildHeader, buildRow, skipQty) {
+    if (items.length === 0) return '';
+    const qtyTh = skipQty ? '' : `<th style="text-align:center;width:62px;white-space:nowrap;">使用數量</th>`;
+    const rows = items.map(c => {
+        const base = buildRow(c);
+        if (skipQty) return base;
+        const qty = getBomQty(parentCode, c.code);
+        const qtyTd = `<td style="text-align:center;padding:6px 4px;">
+            <input type="number" min="1" value="${qty}"
+                style="width:52px;padding:3px 4px;border:1px solid #ddd;border-radius:5px;text-align:center;font-size:0.88rem;font-weight:600;color:#1a73e8;"
+                onchange="setBomQty('${parentCode}','${c.code}',this.value,this)"
+                onkeydown="if(event.key==='Enter')this.blur()"
+                title="此料號在本成品中的使用數量">
+        </td>`;
+        return base.replace('</tr>', qtyTd + '</tr>');
+    }).join('');
+    return `<table><thead><tr>${buildHeader()}${qtyTh}</tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 // === BOM 群組內快速新增 ===
