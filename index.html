@@ -220,30 +220,12 @@
                 </select>
             </div>
             <div class="form-group">
-                <label>物料類型</label>
-                <select id="material">
+                <label style="display:flex;justify-content:space-between;align-items:center;">
+                    <span>物料類型</span>
+                    <span onclick="openMaterialManager()" style="font-size:0.78rem;color:#1a73e8;cursor:pointer;font-weight:400;text-decoration:underline;">⚙ 管理類型</span>
+                </label>
+                <select id="material" onchange="updatePreview()">
                     <option value="">-- 請選擇 --</option>
-                    <option value="ELE">ELE - 電子電控類</option>
-                    <option value="PNE">PNE - 氣動氣路類</option>
-                    <option value="MEC">MEC - 金屬材料/加工件類</option>
-                    <option value="PAC">PAC - 包裝/紙材類</option>
-                    <option value="PLA">PLA - 塑膠原料類</option>
-                    <option value="CHE">CHE - 化學耗材類</option>
-                    <option value="FAS">FAS - 標準鎖附五金類</option>
-                    <option value="TRA">TRA - 傳動元件類</option>
-                    <option value="RUB">RUB - 橡膠/矽膠類</option>
-                    <option value="CAB">CAB - 線材/線纜類</option>
-                    <option value="OPT">OPT - 光學元件類</option>
-                    <option value="CON">CON - 一般耗材類</option>
-                    <option value="RSP">RSP - Reticle SMIF Pod</option>
-                    <option value="FOS">FOS - Front Opening Shipping Box</option>
-                    <option value="LMB">LMB - Large Mask Box</option>
-                    <option value="FOU">FOU - Front Opening Unified Pod</option>
-                    <option value="OVT">OVT - Oval Tube</option>
-                    <option value="ARS">ARS - Automatic RSP Assembly Machine</option>
-                    <option value="ANJ">ANJ - Automatic Night Jar Measurement System</option>
-                    <option value="OHB">OHB - Overhead Hoist Buffer</option>
-                    <option value="AOI">AOI - Automated Optical Inspection</option>
                 </select>
             </div>
             <div class="form-group">
@@ -1417,7 +1399,7 @@ function buildSourceSelect(current) {
 
 function buildMaterialSelect(currentCode) {
     let h = '<select class="edit-select" data-field="material">';
-    Object.entries(MATERIAL_LABEL).forEach(([k,v]) => { h += `<option value="${k}" ${currentCode===k?'selected':''}>${k} - ${v}</option>`; });
+    Object.entries(getAllMaterials()).forEach(([k,v]) => { h += `<option value="${k}" ${currentCode===k?'selected':''}>${k} - ${v}</option>`; });
     h += '</select>';
     return h;
 }
@@ -1905,8 +1887,8 @@ function showQuickAdd(parentCode, attrCode) {
     const container = document.getElementById(containerId);
     if (!container) return;
 
-    const materialOptions = VALID_MATERIAL.map(m =>
-        `<option value="${m}">${m} - ${MATERIAL_LABEL[m]}</option>`).join('');
+    const materialOptions = Object.entries(getAllMaterials()).map(([k,v]) =>
+        `<option value="${k}">${k} - ${v}</option>`).join('');
 
     container.innerHTML = `
     <div class="quick-add-row" id="qaRow_${parentCode}_${attrCode}">
@@ -2529,7 +2511,7 @@ function renderBomTable() {
 
         const attrOpts = [['A','成品'],['B','半成品'],['C','物料']];
         const srcOpts = [['1','自製'],['2','客供'],['3','外購']];
-        const matOpts = VALID_MATERIAL.map(v => [v, v]);
+        const matOpts = Object.entries(getAllMaterials()).map(([k]) => [k, k]);
         const gradeOpts = [['N','新品'],['R','維修品']];
 
         const missing = [];
@@ -2997,6 +2979,146 @@ async function toggleLock(code) {
     }
 }
 
+// === 自訂物料類型 ===
+function loadCustomMaterials() { return JSON.parse(localStorage.getItem('customMaterials') || '[]'); }
+function saveCustomMaterials(arr) { localStorage.setItem('customMaterials', JSON.stringify(arr)); }
+
+// 合併內建 + 自訂，回傳 {code: label} 物件
+function getAllMaterials() {
+    const all = { ...MATERIAL_LABEL };
+    loadCustomMaterials().forEach(({ code, label }) => { all[code] = label; });
+    return all;
+}
+
+// 重新填充頁面上所有物料類型 select（保留當前選擇）
+function refreshMaterialDropdowns() {
+    const all = getAllMaterials();
+    const baseOpts = '<option value="">-- 請選擇 --</option>' +
+        Object.entries(all).map(([k, v]) => `<option value="${k}">${k} - ${v}</option>`).join('');
+    ['material'].forEach(id => {
+        const sel = document.getElementById(id);
+        if (!sel) return;
+        const cur = sel.value;
+        sel.innerHTML = baseOpts;
+        if (cur) sel.value = cur;
+    });
+}
+
+function openMaterialManager() {
+    const m = ensureModal('matMgrModal', '⚙ 物料類型管理');
+    m.wrap.style.display = 'flex';
+    renderMatManager(m.body);
+}
+
+function renderMatManager(body) {
+    const custom = loadCustomMaterials();
+    const all = getAllMaterials();
+
+    let builtinRows = Object.entries(MATERIAL_LABEL).map(([k, v]) =>
+        `<tr style="color:#888;">
+            <td style="padding:6px 10px;font-family:Consolas;font-weight:600;">${k}</td>
+            <td style="padding:6px 10px;">${v}</td>
+            <td style="padding:6px 10px;font-size:0.78rem;color:#bbb;">內建</td>
+        </tr>`).join('');
+
+    let customRows = custom.length === 0
+        ? `<tr><td colspan="3" style="padding:10px;color:#aaa;text-align:center;">尚無自訂類型</td></tr>`
+        : custom.map((item, idx) =>
+            `<tr>
+                <td style="padding:6px 10px;font-family:Consolas;font-weight:600;color:#1a73e8;">${item.code}</td>
+                <td style="padding:6px 10px;">${item.label}</td>
+                <td style="padding:6px 4px;">
+                    <button onclick="deleteCustomMaterial(${idx})" style="color:#d32f2f;border:none;background:none;cursor:pointer;font-size:0.82rem;">刪除</button>
+                </td>
+            </tr>`).join('');
+
+    body.innerHTML = `
+    <div style="padding:20px;max-height:70vh;overflow-y:auto;">
+        <h3 style="font-size:0.95rem;color:#333;margin-bottom:12px;">➕ 新增自訂類型</h3>
+        <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:20px;">
+            <div style="display:flex;flex-direction:column;gap:4px;">
+                <label style="font-size:0.78rem;color:#555;">代碼（1-6碼英文大寫）</label>
+                <input id="newMatCode" type="text" maxlength="6" placeholder="如：WLD" style="width:100px;padding:7px 10px;border:1.5px solid #ddd;border-radius:7px;font-family:Consolas;font-size:0.95rem;text-transform:uppercase;"
+                    oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,'')">
+            </div>
+            <div style="display:flex;flex-direction:column;gap:4px;flex:1;min-width:160px;">
+                <label style="font-size:0.78rem;color:#555;">名稱</label>
+                <input id="newMatLabel" type="text" maxlength="30" placeholder="如：焊接/加工類" style="width:100%;padding:7px 10px;border:1.5px solid #ddd;border-radius:7px;font-size:0.92rem;">
+            </div>
+            <button onclick="addCustomMaterial()" style="padding:8px 20px;background:#1a73e8;color:#fff;border:none;border-radius:7px;font-size:0.9rem;font-weight:700;cursor:pointer;white-space:nowrap;">新增</button>
+        </div>
+        <div id="matMgrMsg" style="display:none;padding:8px 12px;border-radius:6px;margin-bottom:12px;font-size:0.85rem;"></div>
+
+        <h3 style="font-size:0.95rem;color:#333;margin-bottom:8px;">自訂類型</h3>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:16px;">
+            <thead><tr style="background:#f5f5f5;font-size:0.82rem;color:#555;">
+                <th style="padding:6px 10px;text-align:left;">代碼</th>
+                <th style="padding:6px 10px;text-align:left;">名稱</th>
+                <th style="padding:6px 10px;"></th>
+            </tr></thead>
+            <tbody>${customRows}</tbody>
+        </table>
+
+        <h3 style="font-size:0.95rem;color:#aaa;margin-bottom:8px;">內建類型（唯讀）</h3>
+        <table style="width:100%;border-collapse:collapse;">
+            <thead><tr style="background:#f5f5f5;font-size:0.82rem;color:#555;">
+                <th style="padding:6px 10px;text-align:left;">代碼</th>
+                <th style="padding:6px 10px;text-align:left;">名稱</th>
+                <th></th>
+            </tr></thead>
+            <tbody>${builtinRows}</tbody>
+        </table>
+    </div>`;
+}
+
+function addCustomMaterial() {
+    const code  = (document.getElementById('newMatCode')?.value  || '').trim().toUpperCase();
+    const label = (document.getElementById('newMatLabel')?.value || '').trim();
+    const msgEl = document.getElementById('matMgrMsg');
+
+    const showErr = t => { msgEl.textContent = t; msgEl.style.display='block'; msgEl.style.background='#ffebee'; msgEl.style.color='#c62828'; };
+    const showOk  = t => { msgEl.textContent = t; msgEl.style.display='block'; msgEl.style.background='#e8f5e9'; msgEl.style.color='#2e7d32'; };
+
+    if (!code)  return showErr('請輸入代碼');
+    if (!label) return showErr('請輸入名稱');
+    if (!/^[A-Z0-9]{1,6}$/.test(code)) return showErr('代碼只能含英文大寫或數字，最多6碼');
+
+    const allExisting = getAllMaterials();
+    if (allExisting[code]) return showErr(`代碼 ${code} 已存在（${allExisting[code]}）`);
+
+    const arr = loadCustomMaterials();
+    arr.push({ code, label });
+    saveCustomMaterials(arr);
+    refreshMaterialDropdowns();
+    showOk(`✓ 已新增：${code} - ${label}`);
+    document.getElementById('newMatCode').value = '';
+    document.getElementById('newMatLabel').value = '';
+    // 重新渲染清單
+    const body = document.querySelector('#matMgrModal .modal-body, #matMgrModal [style*="overflow-y"]');
+    if (body) renderMatManager(body);
+    // 重新整理清單需重新 query
+    const wrap = document.getElementById('matMgrModal');
+    if (wrap) {
+        const inner = wrap.querySelector('div[style*="overflow-y"]') || wrap.querySelector('div:last-child > div');
+        if (inner) renderMatManager(inner);
+    }
+}
+
+function deleteCustomMaterial(idx) {
+    const arr = loadCustomMaterials();
+    if (!arr[idx]) return;
+    if (!confirm(`確定刪除「${arr[idx].code} - ${arr[idx].label}」？`)) return;
+    arr.splice(idx, 1);
+    saveCustomMaterials(arr);
+    refreshMaterialDropdowns();
+    // 重新渲染 modal 內容
+    const wrap = document.getElementById('matMgrModal');
+    if (wrap) {
+        const body = wrap.querySelector('.modal-body') || wrap.querySelector('[style*="overflow-y:auto"]') || wrap.querySelector('[style*="overflow-y: auto"]');
+        if (body) renderMatManager(body);
+    }
+}
+
 // === 共用 Modal 框架 ===
 function ensureModal(id, title) {
     let wrap = document.getElementById(id);
@@ -3032,6 +3154,7 @@ if ('serviceWorker' in navigator) {
         // 一次性遷移：localStorage 的舊 BOM 歸屬 → DB parent_code
         await migrateBomMapToDb();
         await autoDetectBomGroups();
+        refreshMaterialDropdowns();
         populateExpParent();
         renderTable();
     } catch (e) {
