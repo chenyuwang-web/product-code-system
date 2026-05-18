@@ -3037,8 +3037,8 @@ function renderMatManager(body) {
         <h3 style="font-size:0.95rem;color:#333;margin-bottom:12px;">➕ 新增自訂類型</h3>
         <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:20px;">
             <div style="display:flex;flex-direction:column;gap:4px;">
-                <label style="font-size:0.78rem;color:#555;">代碼（1-6碼英文大寫）</label>
-                <input id="newMatCode" type="text" maxlength="6" placeholder="如：WLD" style="width:100px;padding:7px 10px;border:1.5px solid #ddd;border-radius:7px;font-family:Consolas;font-size:0.95rem;text-transform:uppercase;"
+                <label style="font-size:0.78rem;color:#555;">代碼（固定3碼英文大寫）</label>
+                <input id="newMatCode" type="text" maxlength="3" placeholder="WLD" style="width:80px;padding:7px 10px;border:1.5px solid #ddd;border-radius:7px;font-family:Consolas;font-size:0.95rem;text-transform:uppercase;letter-spacing:2px;"
                     oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,'')">
             </div>
             <div style="display:flex;flex-direction:column;gap:4px;flex:1;min-width:160px;">
@@ -3081,7 +3081,7 @@ function addCustomMaterial() {
 
     if (!code)  return showErr('請輸入代碼');
     if (!label) return showErr('請輸入名稱');
-    if (!/^[A-Z0-9]{1,6}$/.test(code)) return showErr('代碼只能含英文大寫或數字，最多6碼');
+    if (!/^[A-Z0-9]{3}$/.test(code)) return showErr('代碼必須為固定3碼英文大寫或數字');
 
     const allExisting = getAllMaterials();
     if (allExisting[code]) return showErr(`代碼 ${code} 已存在（${allExisting[code]}）`);
