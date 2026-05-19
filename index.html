@@ -2982,10 +2982,14 @@ async function toggleLock(code) {
 // === 自訂物料類型 ===
 function loadCustomMaterials() { return JSON.parse(localStorage.getItem('customMaterials') || '[]'); }
 function saveCustomMaterials(arr) { localStorage.setItem('customMaterials', JSON.stringify(arr)); }
+function loadBuiltinOverrides() { return JSON.parse(localStorage.getItem('builtinMatOverrides') || '{}'); }
+function saveBuiltinOverrides(m) { localStorage.setItem('builtinMatOverrides', JSON.stringify(m)); }
 
-// 合併內建 + 自訂，回傳 {code: label} 物件
+// 合併內建（含覆寫）+ 自訂，回傳 {code: label} 物件
 function getAllMaterials() {
-    const all = { ...MATERIAL_LABEL };
+    const overrides = loadBuiltinOverrides();
+    const all = {};
+    Object.entries(MATERIAL_LABEL).forEach(([k, v]) => { all[k] = overrides[k] || v; });
     loadCustomMaterials().forEach(({ code, label }) => { all[code] = label; });
     return all;
 }
@@ -3012,14 +3016,20 @@ function openMaterialManager() {
 
 function renderMatManager(body) {
     const custom = loadCustomMaterials();
-    const all = getAllMaterials();
+    const overrides = loadBuiltinOverrides();
 
-    let builtinRows = Object.entries(MATERIAL_LABEL).map(([k, v]) =>
-        `<tr style="color:#888;">
-            <td style="padding:6px 10px;font-family:Consolas;font-weight:600;">${k}</td>
-            <td style="padding:6px 10px;">${v}</td>
-            <td style="padding:6px 10px;font-size:0.78rem;color:#bbb;">內建</td>
-        </tr>`).join('');
+    let builtinRows = Object.entries(MATERIAL_LABEL).map(([k, v]) => {
+        const isOverridden = !!overrides[k];
+        const displayName = isOverridden ? overrides[k] : v;
+        return `<tr id="brow_${k}">
+            <td style="padding:6px 10px;font-family:Consolas;font-weight:600;color:#555;">${k}</td>
+            <td style="padding:6px 10px;">${displayName}${isOverridden ? ` <span style="font-size:0.72rem;color:#e65100;">(已修改)</span>` : ''}</td>
+            <td style="padding:6px 4px;white-space:nowrap;text-align:right;">
+                <button onclick="editBuiltinMaterial('${k}')" style="color:#1a73e8;border:none;background:none;cursor:pointer;font-size:0.82rem;padding:2px 6px;">編輯</button>
+                ${isOverridden ? `<button onclick="resetBuiltinMaterial('${k}')" style="color:#e65100;border:none;background:none;cursor:pointer;font-size:0.82rem;padding:2px 6px;">還原</button>` : ''}
+            </td>
+        </tr>`;
+    }).join('');
 
     let customRows = custom.length === 0
         ? `<tr><td colspan="3" style="padding:10px;color:#aaa;text-align:center;">尚無自訂類型</td></tr>`
@@ -3059,7 +3069,7 @@ function renderMatManager(body) {
             <tbody>${customRows}</tbody>
         </table>
 
-        <h3 style="font-size:0.95rem;color:#aaa;margin-bottom:8px;">內建類型（唯讀）</h3>
+        <h3 style="font-size:0.95rem;color:#333;margin-bottom:8px;">內建類型</h3>
         <table style="width:100%;border-collapse:collapse;">
             <thead><tr style="background:#f5f5f5;font-size:0.82rem;color:#555;">
                 <th style="padding:6px 10px;text-align:left;">代碼</th>
@@ -3102,6 +3112,60 @@ function addCustomMaterial() {
         const inner = wrap.querySelector('div[style*="overflow-y"]') || wrap.querySelector('div:last-child > div');
         if (inner) renderMatManager(inner);
     }
+}
+
+function _matMgrBody() {
+    const wrap = document.getElementById('matMgrModal');
+    if (!wrap) return null;
+    return wrap.querySelector('[style*="overflow-y"]') || wrap.querySelector('.modal-body');
+}
+
+function editBuiltinMaterial(code) {
+    const overrides = loadBuiltinOverrides();
+    const current = overrides[code] || MATERIAL_LABEL[code];
+    const row = document.getElementById('brow_' + code);
+    if (!row) return;
+    row.innerHTML = `
+        <td style="padding:6px 10px;font-family:Consolas;font-weight:600;color:#555;">${code}</td>
+        <td style="padding:4px 6px;">
+            <input id="bedit_${code}" type="text" value="${current.replace(/"/g,'&quot;')}" maxlength="30"
+                style="width:100%;padding:5px 8px;border:1.5px solid #1a73e8;border-radius:6px;font-size:0.9rem;"
+                onkeydown="if(event.key==='Enter')saveBuiltinEdit('${code}');if(event.key==='Escape')cancelBuiltinEdit('${code}')">
+        </td>
+        <td style="padding:4px 6px;white-space:nowrap;text-align:right;">
+            <button onclick="saveBuiltinEdit('${code}')" style="color:#2e7d32;border:none;background:none;cursor:pointer;font-size:0.82rem;font-weight:700;padding:2px 6px;">儲存</button>
+            <button onclick="cancelBuiltinEdit('${code}')" style="color:#888;border:none;background:none;cursor:pointer;font-size:0.82rem;padding:2px 6px;">取消</button>
+        </td>`;
+    document.getElementById('bedit_' + code)?.focus();
+}
+
+function saveBuiltinEdit(code) {
+    const input = document.getElementById('bedit_' + code);
+    if (!input) return;
+    const label = input.value.trim();
+    if (!label) { input.style.borderColor = '#d32f2f'; return; }
+    const overrides = loadBuiltinOverrides();
+    overrides[code] = label;
+    saveBuiltinOverrides(overrides);
+    refreshMaterialDropdowns();
+    const body = _matMgrBody();
+    if (body) renderMatManager(body);
+}
+
+function cancelBuiltinEdit(code) {
+    const body = _matMgrBody();
+    if (body) renderMatManager(body);
+}
+
+function resetBuiltinMaterial(code) {
+    const orig = MATERIAL_LABEL[code];
+    if (!confirm(`還原「${code}」為預設名稱「${orig}」？`)) return;
+    const overrides = loadBuiltinOverrides();
+    delete overrides[code];
+    saveBuiltinOverrides(overrides);
+    refreshMaterialDropdowns();
+    const body = _matMgrBody();
+    if (body) renderMatManager(body);
 }
 
 function deleteCustomMaterial(idx) {
