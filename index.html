@@ -2190,13 +2190,15 @@ function clearBulk() {
 // === 檔案匯入 ===
 let fileParsed = [];
 
-function handleFileDrop(e) { if (e.dataTransfer.files[0]) processFile(e.dataTransfer.files[0]); }
-function handleFileSelect(e) { if (e.target.files[0]) processFile(e.target.files[0]); e.target.value = ''; }
+function handleFileDrop(e) { if (e.dataTransfer.files[0]) processFile(e.dataTransfer.files[0]).catch(err => showMsg('匯入失敗：' + err.message, 'error', 'fileMsg')); }
+function handleFileSelect(e) { if (e.target.files[0]) processFile(e.target.files[0]).catch(err => showMsg('匯入失敗：' + err.message, 'error', 'fileMsg')); e.target.value = ''; }
 
 async function processFile(file) {
-    await loadCodes(); // 先重新抓最新資料，避免快取舊資料誤判衝突
+    try { await loadCodes(); } catch(e) { showMsg('資料載入失敗，請重試：' + e.message, 'error', 'fileMsg'); return; }
     const reader = new FileReader();
+    reader.onerror = () => showMsg('檔案讀取失敗，請確認檔案格式', 'error', 'fileMsg');
     reader.onload = function(e) {
+        try {
         let allRows = []; // 每行的所有欄位
         if (file.name.endsWith('.csv')) {
             const lines = e.target.result.split('\n').filter(l => l.trim());
@@ -2204,6 +2206,7 @@ async function processFile(file) {
                 allRows.push(line.split(/[,\t]+/).map(s => s.trim().replace(/^"|"$/g, '')));
             });
         } else {
+            if (typeof XLSX === 'undefined') { showMsg('試算表解析套件尚未載入，請稍後再試或改用 CSV 格式', 'error', 'fileMsg'); return; }
             const data = new Uint8Array(e.target.result);
             const wb = XLSX.read(data, { type: 'array' });
             wb.SheetNames.forEach(name => {
@@ -2249,11 +2252,15 @@ async function processFile(file) {
             }
         }
 
-        if (!fileParsed.length) { showMsg('檔案中沒有找到資料', 'error', 'fileMsg'); return; }
+        if (!fileParsed.length) { showMsg('檔案中沒有找到資料（找不到合法編碼欄位）', 'error', 'fileMsg'); return; }
         showMsg(`從 ${file.name} 讀取到 ${fileParsed.length} 筆資料`, 'success', 'fileMsg');
         renderFilePreview();
+        } catch(err) {
+            showMsg('解析失敗：' + err.message, 'error', 'fileMsg');
+            console.error('processFile error:', err);
+        }
     };
-    if (file.name.endsWith('.csv')) reader.readAsText(file);
+    if (file.name.endsWith('.csv')) reader.readAsText(file, 'UTF-8');
     else reader.readAsArrayBuffer(file);
 }
 
