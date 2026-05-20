@@ -2252,11 +2252,11 @@ async function processFile(file) {
             }
         }
 
-        if (!fileParsed.length) { showMsg('檔案中沒有找到資料（找不到合法編碼欄位）', 'error', 'fileMsg'); return; }
-        showMsg(`從 ${file.name} 讀取到 ${fileParsed.length} 筆資料`, 'success', 'fileMsg');
+        if (!fileParsed.length) { setFileMsg('⚠ 檔案中沒有找到合法編碼（格式需為 10 碼，如 C3PLAN0006）', 'error'); return; }
+        setFileMsg(`✓ 從 ${file.name} 讀取到 ${fileParsed.length} 筆資料`, 'success');
         renderFilePreview();
         } catch(err) {
-            showMsg('解析失敗：' + err.message, 'error', 'fileMsg');
+            setFileMsg('解析失敗：' + err.message, 'error');
             console.error('processFile error:', err);
         }
     };
@@ -2307,7 +2307,18 @@ function renderFilePreview() {
     });
     html += '</tbody></table>';
     document.getElementById('filePreview').innerHTML = html;
-    document.getElementById('fileAddBtn').style.display = valid > 0 ? '' : 'none';
+    if (valid > 0) {
+        document.getElementById('fileAddBtn').style.display = '';
+        setFileMsg(`✓ 讀取完成：${valid} 筆可匯入，${dup + dupBatch} 筆沿用，${invalid} 筆無法辨識`, 'success');
+    } else if (total > 0) {
+        document.getElementById('fileAddBtn').style.display = 'none';
+        const dupCount = dup + dupBatch;
+        if (dupCount > 0 && invalid === 0) {
+            setFileMsg(`✓ 所有 ${dupCount} 筆編碼已在資料庫中，無需重新匯入`, 'success');
+        } else if (invalid > 0) {
+            setFileMsg(`⚠ 找不到可匯入的編碼（${invalid} 筆無法辨識，請確認編碼格式為 10 碼）`, 'error');
+        }
+    }
 }
 
 function removeFileItem(idx) {
@@ -2318,6 +2329,15 @@ function removeFileItem(idx) {
 function removeFileInvalid() {
     fileParsed = fileParsed.filter(p => p.status !== 'invalid');
     renderFilePreview();
+}
+
+function setFileMsg(text, type) {
+    const el = document.getElementById('fileMsg');
+    if (!el) return;
+    el.textContent = text;
+    el.className = 'msg ' + (type === 'error' ? 'msg-error' : 'msg-success');
+    el.style.display = 'block';
+    // 不自動消失，讓使用者看清楚結果
 }
 
 function clearFileImport() {
@@ -2331,13 +2351,13 @@ async function confirmFileBulk() {
     const toAdd = fileParsed.filter(p => p.status === 'valid');
     try {
         await DB.insert(toAdd.map(p => ({ code: p.code, attr: p.attr, source: p.source, material_code: p.materialCode, material: p.material, grade: p.grade, description: p.desc || '' })));
-        showMsg(`成功匯入 ${toAdd.length} 筆編碼！`, 'success', 'fileMsg');
+        setFileMsg(`✓ 成功匯入 ${toAdd.length} 筆編碼！`, 'success');
         document.getElementById('filePreview').innerHTML = '';
         document.getElementById('fileAddBtn').style.display = 'none';
         fileParsed = [];
         await loadCodes();
         renderTable();
-    } catch (e) { showMsg('匯入失敗：' + e.message, 'error', 'fileMsg'); }
+    } catch (e) { setFileMsg('匯入失敗：' + e.message, 'error'); }
 }
 
 // === 原廠料號 → 產品編碼 持久對照表 ===
