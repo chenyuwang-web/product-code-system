@@ -2124,16 +2124,16 @@ function renderBulkPreview() {
     const dup = bulkParsed.filter(p => p.status === 'duplicate').length;
     const invalid = bulkParsed.filter(p => p.status === 'invalid').length;
     let html = `<p style="font-size:0.85rem;margin-bottom:10px;">判讀結果：<span class="valid">可匯入 ${valid} 筆</span>`;
-    if (dup) html += `、<span class="duplicate">重複 ${dup} 筆</span>`;
+    if (dup) html += `、<span class="valid">沿用既有 ${dup} 筆</span>`;
     if (invalid) html += `、<span class="invalid">無法辨識 ${invalid} 筆</span> <button class="btn btn-secondary" style="padding:2px 10px;font-size:0.75rem;margin-left:6px;" onclick="removeBulkInvalid()">移除全部無法辨識</button>`;
     // 判斷是否有階層資料
     const hasLevel = bulkParsed.some(p => p.level !== undefined && p.level !== '');
     html += `</p><table><thead><tr><th>狀態</th>`;
     if (hasLevel) html += `<th>階層</th>`;
-    html += `<th>編碼</th><th>屬性</th><th>來源</th><th>物料類型</th><th>品別</th><th>描述</th><th>衝突品項</th><th></th></tr></thead><tbody>`;
+    html += `<th>編碼</th><th>屬性</th><th>來源</th><th>物料類型</th><th>品別</th><th>描述</th><th>備註</th><th></th></tr></thead><tbody>`;
     bulkParsed.forEach((p, idx) => {
-        const cls = p.status === 'valid' ? 'valid' : p.status === 'duplicate' ? 'duplicate' : 'invalid';
-        const statusText = p.status === 'valid' ? '可匯入' : p.status === 'duplicate' ? '重複' : '無法辨識';
+        const cls = p.status === 'invalid' ? 'invalid' : 'valid';
+        const statusText = p.status === 'valid' ? '可匯入' : p.status === 'duplicate' ? '沿用' : '無法辨識';
         html += `<tr><td class="${cls}">${statusText}</td>`;
         if (hasLevel) html += `<td style="text-align:center;">${p.level !== undefined && p.level !== '' ? p.level : '-'}</td>`;
         html += `<td class="code-cell">${p.code || '-'}</td>`;
@@ -2141,8 +2141,8 @@ function renderBulkPreview() {
         else html += `<td colspan="4" style="color:#c62828;">${p.reason}</td>`;
         html += `<td>${p.desc || '-'}</td>`;
         if (p.status === 'duplicate') {
-            const srcLabel = p.dupSource === 'db' ? '資料庫既有' : '本次匯入';
-            html += `<td style="font-size:0.8rem;color:#e65100;">${srcLabel}<br>編碼：<strong>${p.dupCode}</strong>${p.dupDesc ? '<br>描述：' + p.dupDesc : ''}</td>`;
+            const srcLabel = p.dupSource === 'db' ? '沿用既有編碼' : '沿用（同批次）';
+            html += `<td style="font-size:0.8rem;color:#2e7d32;">✓ ${srcLabel}<br>編碼：<strong>${p.dupCode}</strong>${p.dupDesc ? '<br>描述：' + p.dupDesc : ''}</td>`;
         } else {
             html += `<td>-</td>`;
         }
@@ -2270,24 +2270,24 @@ function renderFilePreview() {
     const invalid = fileParsed.filter(p => p.status === 'invalid').length;
 
     let html = `<p style="font-size:0.85rem;margin:14px 0 10px;">共 <strong>${total}</strong> 筆資料：<span class="valid">可匯入 ${valid} 筆</span>`;
-    if (dup) html += `、<span class="duplicate">與資料庫重複 ${dup} 筆</span>`;
-    if (dupBatch) html += `、<span class="duplicate">檔案內重複 ${dupBatch} 筆</span>`;
+    if (dup) html += `、<span class="valid">沿用既有 ${dup} 筆</span>`;
+    if (dupBatch) html += `、<span class="valid">沿用（檔案內） ${dupBatch} 筆</span>`;
     if (invalid) html += `、<span class="invalid">無法辨識 ${invalid} 筆</span> <button class="btn btn-secondary" style="padding:2px 10px;font-size:0.75rem;margin-left:6px;" onclick="removeFileInvalid()">移除全部無法辨識</button>`;
-    html += `</p><table><thead><tr><th>狀態</th><th>編碼</th><th>屬性</th><th>來源</th><th>物料類型</th><th>品別</th><th>描述</th><th>衝突品項</th><th></th></tr></thead><tbody>`;
+    html += `</p><table><thead><tr><th>狀態</th><th>編碼</th><th>屬性</th><th>來源</th><th>物料類型</th><th>品別</th><th>描述</th><th>備註</th><th></th></tr></thead><tbody>`;
     fileParsed.forEach((p, idx) => {
-        const cls = p.status === 'valid' ? 'valid' : p.status === 'invalid' ? 'invalid' : 'duplicate';
+        const cls = p.status === 'invalid' ? 'invalid' : 'valid';
         let statusText = '可匯入';
-        if (p.status === 'duplicate') statusText = '重複';
-        else if (p.status === 'duplicate-batch') statusText = '檔案內重複';
+        if (p.status === 'duplicate') statusText = '沿用';
+        else if (p.status === 'duplicate-batch') statusText = '沿用';
         else if (p.status === 'invalid') statusText = '無法辨識';
         html += `<tr><td class="${cls}">${statusText}</td><td class="code-cell">${p.code || '-'}</td>`;
         if (p.status !== 'invalid') html += `<td>${p.attr}</td><td>${p.source}</td><td>${p.materialCode} ${p.material}</td><td>${p.grade}</td>`;
         else html += `<td colspan="4" style="color:#c62828;">${p.reason}</td>`;
         html += `<td>${p.desc || '-'}</td>`;
         if (p.status === 'duplicate') {
-            html += `<td style="font-size:0.8rem;color:#e65100;">資料庫既有<br>編碼：<strong>${p.dupCode}</strong>${p.dupDesc ? '<br>描述：' + p.dupDesc : ''}</td>`;
+            html += `<td style="font-size:0.8rem;color:#2e7d32;">✓ 沿用既有編碼<br>編碼：<strong>${p.dupCode}</strong>${p.dupDesc ? '<br>描述：' + p.dupDesc : ''}</td>`;
         } else if (p.status === 'duplicate-batch') {
-            html += `<td style="font-size:0.8rem;color:#e65100;">檔案內重複<br>編碼：<strong>${p.dupCode}</strong>${p.dupDesc ? '<br>描述：' + p.dupDesc : ''}</td>`;
+            html += `<td style="font-size:0.8rem;color:#2e7d32;">✓ 沿用（檔案內）<br>編碼：<strong>${p.dupCode}</strong>${p.dupDesc ? '<br>描述：' + p.dupDesc : ''}</td>`;
         } else {
             html += `<td>-</td>`;
         }
