@@ -2859,7 +2859,13 @@ async function openTrash() {
             </tr>`).join('');
         m.body.innerHTML = `
             <div style="padding:10px 20px;">
-                <p style="color:#666;margin-bottom:10px;">共 ${rows.length} 筆已刪除紀錄</p>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+                    <p style="color:#666;margin:0;">共 ${rows.length} 筆已刪除紀錄</p>
+                    <button onclick="hardDeleteAll(${rows.length})"
+                        style="padding:6px 16px;background:#b71c1c;color:#fff;border:none;border-radius:7px;font-size:0.85rem;font-weight:700;cursor:pointer;">
+                        ✕ 全部永久刪除
+                    </button>
+                </div>
                 <table style="width:100%;border-collapse:collapse;">
                     <thead><tr><th>編碼</th><th>屬性</th><th>物料</th><th>描述</th><th>刪除時間</th><th>操作</th></tr></thead>
                     <tbody>${rowsHtml}</tbody>
@@ -2901,6 +2907,29 @@ async function hardDeleteCode(code) {
         openTrash();
         showListMsg(`✓ ${code} 已永久刪除`, 'success');
     } catch (e) { alert('刪除失敗：' + e.message); }
+}
+
+async function hardDeleteAll(count) {
+    if (!confirm(`確定要永久刪除回收桶內全部 ${count} 筆紀錄？\n此操作無法復原！`)) return;
+    const btn = event.target;
+    btn.disabled = true; btn.textContent = '刪除中…';
+    try {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}?is_deleted=eq.true`, {
+            method: 'DELETE', headers: _H()
+        });
+        if (!res.ok) throw new Error(await res.text());
+        await loadCodes();
+        renderTable();
+        const m = document.getElementById('trashModal');
+        if (m) {
+            const body = m.querySelector('.modal-body') || m.querySelector('[style*="overflow-y"]');
+            if (body) body.innerHTML = '<div style="padding:20px;color:#666;">回收桶是空的</div>';
+        }
+        showListMsg(`✓ 已永久刪除 ${count} 筆`, 'success');
+    } catch (e) {
+        btn.disabled = false; btn.textContent = '✕ 全部永久刪除';
+        alert('刪除失敗：' + e.message);
+    }
 }
 
 // === 操作日誌 ===
