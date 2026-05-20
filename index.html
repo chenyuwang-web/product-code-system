@@ -3237,7 +3237,16 @@ function ensureModal(id, title) {
 
 // === Service Worker 註冊 ===
 if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').catch(() => {});
+    navigator.serviceWorker.register('./sw.js').then(reg => {
+        // 新版 SW 安裝完成後自動重新整理頁面，確保執行最新程式碼
+        reg.addEventListener('updatefound', () => {
+            const newWorker = reg.installing;
+            if (!newWorker) return;
+            newWorker.addEventListener('statechange', () => {
+                if (newWorker.state === 'activated') location.reload();
+            });
+        });
+    }).catch(() => {});
 }
 
 // === 初始化 ===
