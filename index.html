@@ -238,7 +238,8 @@
             </div>
             <div class="form-group">
                 <label>產品描述（選填）</label>
-                <input type="text" id="desc" placeholder="例如：主控制板 V2">
+                <input type="text" id="desc" placeholder="例如：主控制板 V2" oninput="checkDescDuplicate()">
+                <div id="descDupWarn" style="display:none;margin-top:6px;padding:8px 12px;background:#fff8e1;border:1px solid #ffe082;border-radius:7px;font-size:0.82rem;color:#7b5800;line-height:1.6;"></div>
             </div>
             <div class="form-group">
                 <label>流水號（自動產生，或手動輸入）</label>
@@ -763,6 +764,43 @@ function hideCodeDetail() {
     if (detail) detail.style.display = 'none';
 }
 
+function checkDescDuplicate() {
+    const desc = (document.getElementById('desc')?.value || '').trim();
+    const warnEl = document.getElementById('descDupWarn');
+    if (!warnEl) return;
+
+    if (desc.length < 4) { warnEl.style.display = 'none'; return; }
+
+    const descLow = desc.toLowerCase();
+    const matches = codesCache.filter(c => {
+        if (!c.description) return false;
+        const d = c.description.toLowerCase();
+        // 完全相符 或 互相包含
+        return d === descLow || d.includes(descLow) || (descLow.length >= 6 && descLow.includes(d));
+    });
+
+    if (!matches.length) { warnEl.style.display = 'none'; return; }
+
+    const exactMatch = matches.find(c => (c.description || '').trim().toLowerCase() === descLow);
+    const items = matches.slice(0, 4).map(c =>
+        `<span style="font-family:Consolas;font-weight:700;color:#1a73e8;">${c.code}</span>　${c.description || ''}`
+    ).join('<br>');
+    const more = matches.length > 4 ? `<br>…共 ${matches.length} 筆` : '';
+
+    if (exactMatch) {
+        warnEl.style.background = '#ffebee';
+        warnEl.style.borderColor = '#ef9a9a';
+        warnEl.style.color = '#b71c1c';
+        warnEl.innerHTML = `⚠ 描述完全相符，現有編碼：<br>${items}${more}`;
+    } else {
+        warnEl.style.background = '#fff8e1';
+        warnEl.style.borderColor = '#ffe082';
+        warnEl.style.color = '#7b5800';
+        warnEl.innerHTML = `🔍 找到 ${matches.length} 筆相似品項，請確認是否重複：<br>${items}${more}`;
+    }
+    warnEl.style.display = 'block';
+}
+
 function updatePreview() {
     const vals = selectors.map(id => document.getElementById(id).value);
     const serial = document.getElementById('serial').value;
@@ -859,6 +897,8 @@ function resetForm() {
     document.getElementById('addBtn').disabled = true;
     document.getElementById('serial').placeholder = '自動帶入下一個可用號碼';
     document.getElementById('msg').style.display = 'none';
+    const dw = document.getElementById('descDupWarn');
+    if (dw) dw.style.display = 'none';
     hideCodeDetail();
 }
 
