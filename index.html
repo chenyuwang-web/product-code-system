@@ -245,6 +245,12 @@
                 <label>流水號（自動產生，或手動輸入）</label>
                 <input type="text" id="serial" placeholder="自動帶入下一個可用號碼" maxlength="4">
             </div>
+            <div class="form-group">
+                <label>所屬成品（選填，可複選；建立成品本身不需選）</label>
+                <div id="addParent" style="max-height:120px;overflow-y:auto;border:1px solid #ddd;border-radius:8px;padding:8px 10px;background:#fff;">
+                    <span style="color:#999;font-size:0.85rem;">尚無成品可選</span>
+                </div>
+            </div>
         </div>
         <div class="preview-box">
             <div class="label">編碼預覽</div>
@@ -873,7 +879,29 @@ function checkDescDuplicate() {
     warnEl.style.display = 'block';
 }
 
+// 建立編碼時可複選的「所屬成品」；屬性=成品時不適用（成品本身不需要歸屬）
+function populateAddParent() {
+    const box = document.getElementById('addParent');
+    if (!box) return;
+    const attr = document.getElementById('attr').value;
+    if (attr === 'A') {
+        box.innerHTML = '<span style="color:#999;font-size:0.85rem;">建立成品本身不需選擇所屬成品</span>';
+        return;
+    }
+    const checked = new Set(Array.from(box.querySelectorAll('input:checked')).map(cb => cb.value));
+    const products = codesCache.filter(c => c.attr === '成品');
+    if (!products.length) {
+        box.innerHTML = '<span style="color:#999;font-size:0.85rem;">尚無成品可選</span>';
+        return;
+    }
+    box.innerHTML = products.map(p => `
+        <label style="display:block;font-size:0.85rem;padding:2px 0;cursor:pointer;">
+            <input type="checkbox" value="${p.code}" ${checked.has(p.code) ? 'checked' : ''}> ${p.code}${p.description ? ' — ' + p.description.substring(0,30) : ''}
+        </label>`).join('');
+}
+
 function updatePreview() {
+    populateAddParent();
     const vals = selectors.map(id => document.getElementById(id).value);
     const serial = document.getElementById('serial').value;
     const allSelected = vals.every(v => v !== '');
@@ -945,10 +973,15 @@ async function addCode() {
     const materialEl = document.getElementById('material');
     const materialLabel = materialEl.options[materialEl.selectedIndex].text.split(' - ')[1] || vals[2];
     const desc = document.getElementById('desc').value.trim();
+    const parents = vals[0] !== 'A'
+        ? Array.from(document.querySelectorAll('#addParent input:checked')).map(cb => cb.value)
+        : [];
 
     try {
         await DB.insert({ code, attr: ATTR_LABEL[vals[0]], source: SOURCE_LABEL[vals[1]], material_code: vals[2], material: materialLabel, grade: GRADE_LABEL[vals[3]], description: desc });
-        showMsg(`編碼 ${code} 新增成功！`, 'success');
+        if (parents.length) await Promise.all(parents.map(p => DB.addLink(code, p)));
+        const parentHint = parents.length ? `，已歸屬至 ${parents.join('、')}` : '';
+        showMsg(`編碼 ${code} 新增成功${parentHint}！`, 'success');
         resetForm();
         await loadCodes();
         renderTable();
@@ -965,6 +998,8 @@ function resetForm() {
     selectors.forEach(id => document.getElementById(id).value = '');
     document.getElementById('serial').value = '';
     document.getElementById('desc').value = '';
+    document.querySelectorAll('#addParent input:checked').forEach(cb => cb.checked = false);
+    populateAddParent();
     document.getElementById('preview').textContent = '------';
     document.getElementById('addBtn').disabled = true;
     document.getElementById('serial').placeholder = '自動帶入下一個可用號碼';
@@ -3419,6 +3454,7 @@ if ('serviceWorker' in navigator) {
         await autoDetectBomGroups();
         refreshMaterialDropdowns();
         populateExpParent();
+        populateAddParent();
         renderTable();
     } catch (e) {
         document.getElementById('loadingOverlay').textContent = '載入失敗：' + e.message;
