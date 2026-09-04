@@ -277,10 +277,10 @@
                 </select>
             </div>
             <div class="form-group">
-                <label>所屬成品（選填）</label>
-                <select id="expParent">
-                    <option value="">-- 不指定 --</option>
-                </select>
+                <label>所屬成品（選填，可複選）</label>
+                <div id="expParent" style="max-height:120px;overflow-y:auto;border:1px solid #ddd;border-radius:8px;padding:8px 10px;background:#fff;">
+                    <span style="color:#999;font-size:0.85rem;">尚無成品可選</span>
+                </div>
             </div>
             <div class="form-group" style="grid-column:1/-1;">
                 <label>產品描述（選填）</label>
@@ -523,11 +523,12 @@
         <!-- 批次操作列：有勾選時固定在畫面底部 -->
         <div class="bulk-action-bar" id="bulkActionBar">
             <span class="bulk-label" id="bulkActionLabel">已選 0 筆</span>
-            <span style="font-size:0.85rem;color:rgba(255,255,255,0.85);">更換歸屬：</span>
+            <span style="font-size:0.85rem;color:rgba(255,255,255,0.85);">加入成品：</span>
             <select id="bulkParentSelect">
-                <option value="">── 移出（未歸類）</option>
+                <option value="">-- 選擇成品 --</option>
             </select>
-            <button class="bulk-confirm-btn" onclick="bulkReassign()">✓ 確認更換</button>
+            <button class="bulk-confirm-btn" onclick="bulkReassign()">✓ 加入</button>
+            <button class="bulk-cancel-btn" onclick="bulkUnassignAll()">✕ 移除所有歸屬</button>
             <button class="bulk-delete-btn" onclick="bulkDelete()">🗑 批次刪除</button>
             <button class="bulk-cancel-btn" onclick="clearSelection()">✕ 取消選取</button>
         </div>
@@ -629,6 +630,52 @@ const DB = {
         const res = await fetch(`${SUPABASE_URL}/rest/v1/operation_logs?select=*&order=created_at.desc&limit=${limit}`, { headers: _H() });
         if (!res.ok) throw new Error(await res.text());
         return res.json();
+    },
+    // === BOM 多對多歸屬（bom_links）===
+    async getLinks() {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/bom_links?select=child_code,parent_code`, { headers: _H() });
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+    },
+    async addLink(childCode, parentCode) {
+        if (!childCode || !parentCode || childCode === parentCode) return;
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/bom_links?on_conflict=child_code,parent_code`, {
+            method: 'POST',
+            headers: { ..._HJ(), 'Prefer': 'resolution=ignore-duplicates,return=minimal' },
+            body: JSON.stringify({ child_code: childCode, parent_code: parentCode })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        Logger.log('link_add', childCode, { parent: parentCode });
+    },
+    async removeLink(childCode, parentCode) {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/bom_links?child_code=eq.${encodeURIComponent(childCode)}&parent_code=eq.${encodeURIComponent(parentCode)}`, {
+            method: 'DELETE', headers: _H()
+        });
+        if (!res.ok) throw new Error(await res.text());
+        Logger.log('link_remove', childCode, { parent: parentCode });
+    },
+    async removeLinksForChild(childCode) {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/bom_links?child_code=eq.${encodeURIComponent(childCode)}`, {
+            method: 'DELETE', headers: _H()
+        });
+        if (!res.ok) throw new Error(await res.text());
+    },
+    async removeLinksForParent(parentCode) {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/bom_links?parent_code=eq.${encodeURIComponent(parentCode)}`, {
+            method: 'DELETE', headers: _H()
+        });
+        if (!res.ok) throw new Error(await res.text());
+    },
+    // 改碼時把舊 code 在 bom_links 中出現過的地方（不論是子件還是父件）都搬到新 code
+    async renameLinkRefs(oldCode, newCode) {
+        await Promise.all([
+            fetch(`${SUPABASE_URL}/rest/v1/bom_links?child_code=eq.${encodeURIComponent(oldCode)}`, {
+                method: 'PATCH', headers: _HJ(), body: JSON.stringify({ child_code: newCode })
+            }),
+            fetch(`${SUPABASE_URL}/rest/v1/bom_links?parent_code=eq.${encodeURIComponent(oldCode)}`, {
+                method: 'PATCH', headers: _HJ(), body: JSON.stringify({ parent_code: newCode })
+            })
+        ]);
     }
 };
 
@@ -651,12 +698,14 @@ const VALID_STATUS = ['啟用', '草稿', '停用', '淘汰'];
 // === 本地快取 ===
 let codesCache = [];
 let deletedCodesCache = []; // 軟刪除（回收桶）快取
+let linksCache = []; // BOM 多對多歸屬（bom_links）：[{child_code, parent_code}]
 
 async function loadCodes() {
     try {
-        [codesCache, deletedCodesCache] = await Promise.all([
+        [codesCache, deletedCodesCache, linksCache] = await Promise.all([
             DB.select(),
-            DB.select({ deleted: true })
+            DB.select({ deleted: true }),
+            DB.getLinks()
         ]);
         setSyncStatus(true);
     } catch (e) {
@@ -664,6 +713,26 @@ async function loadCodes() {
         setSyncStatus(false);
     }
     return codesCache;
+}
+
+// 一個子件可同時歸屬多個成品/半成品
+function getParentsOf(code) {
+    return linksCache.filter(l => l.child_code === code).map(l => l.parent_code);
+}
+function getChildrenOf(code) {
+    return linksCache.filter(l => l.parent_code === code).map(l => l.child_code);
+}
+// 將 childCode 的歸屬對齊為 parentCodes 這個集合（新增缺少的、移除多餘的）
+async function setParentsOf(childCode, parentCodes) {
+    const current = getParentsOf(childCode);
+    const toAdd = parentCodes.filter(p => !current.includes(p));
+    const toRemove = current.filter(p => !parentCodes.includes(p));
+    await Promise.all([
+        ...toAdd.map(p => DB.addLink(childCode, p)),
+        ...toRemove.map(p => DB.removeLink(childCode, p))
+    ]);
+    linksCache = linksCache.filter(l => !(l.child_code === childCode && toRemove.includes(l.parent_code)));
+    toAdd.forEach(p => linksCache.push({ child_code: childCode, parent_code: p }));
 }
 
 function setSyncStatus(ok) {
@@ -711,14 +780,13 @@ function getNextSerial(attr, source, material, grade) {
 function getExistingCodeInfo(code) {
     const item = codesCache.find(c => c.code === code);
     if (item) {
-        const parentMap = loadBomParentMap();
-        const parentCode = parentMap[code];
-        const parentItem = parentCode ? codesCache.find(c => c.code === parentCode) : null;
-        return { item, parentCode, parentItem, inTrash: false };
+        const parentCodes = getParentsOf(code);
+        const parentItems = parentCodes.map(pc => codesCache.find(c => c.code === pc)).filter(Boolean);
+        return { item, parentCodes, parentItems, inTrash: false };
     }
     // 檢查回收桶
     const deleted = deletedCodesCache.find(c => c.code === code);
-    if (deleted) return { item: deleted, parentCode: null, parentItem: null, inTrash: true };
+    if (deleted) return { item: deleted, parentCodes: [], parentItems: [], inTrash: true };
     return null;
 }
 
@@ -727,7 +795,7 @@ function showCodeDetail(code) {
     if (!detail) return;
     const info = getExistingCodeInfo(code);
     if (!info) { detail.style.display = 'none'; return; }
-    const { item, parentCode, parentItem, inTrash } = info;
+    const { item, parentCodes, parentItems, inTrash } = info;
     const desc = item.description || '（無描述）';
     const attrLabel = item.attr || '';
 
@@ -745,9 +813,13 @@ function showCodeDetail(code) {
         detail.style.borderColor = '#ffb74d';
     } else {
         let parentHtml = '';
-        if (parentCode) {
-            const pDesc = parentItem ? (parentItem.description || '') : '';
-            parentHtml = `<br>📦 所屬成品：<strong style="color:#1a73e8;">${parentCode}</strong>${pDesc ? ` — ${pDesc}` : ''}`;
+        if (parentCodes.length) {
+            const parts = parentCodes.map(pc => {
+                const pi = parentItems.find(p => p.code === pc);
+                const pDesc = pi ? (pi.description || '') : '';
+                return `<strong style="color:#1a73e8;">${pc}</strong>${pDesc ? ` — ${pDesc}` : ''}`;
+            }).join('、');
+            parentHtml = `<br>📦 所屬成品：${parts}`;
         } else if (item.attr !== '成品') {
             parentHtml = `<br>📦 所屬成品：<span style="color:#e65100;">未歸類</span>`;
         }
@@ -916,12 +988,18 @@ function getNextExpenseSerial(matType) {
 }
 
 function populateExpParent() {
-    const sel = document.getElementById('expParent');
-    if (!sel) return;
-    const cur = sel.value;
+    const box = document.getElementById('expParent');
+    if (!box) return;
+    const checked = new Set(Array.from(box.querySelectorAll('input:checked')).map(cb => cb.value));
     const products = codesCache.filter(c => c.attr === '成品');
-    sel.innerHTML = '<option value="">-- 不指定 --</option>' +
-        products.map(p => `<option value="${p.code}" ${cur===p.code?'selected':''}>${p.code}${p.description ? ' — ' + p.description.substring(0,30) : ''}</option>`).join('');
+    if (!products.length) {
+        box.innerHTML = '<span style="color:#999;font-size:0.85rem;">尚無成品可選</span>';
+        return;
+    }
+    box.innerHTML = products.map(p => `
+        <label style="display:block;font-size:0.85rem;padding:2px 0;cursor:pointer;">
+            <input type="checkbox" value="${p.code}" ${checked.has(p.code) ? 'checked' : ''}> ${p.code}${p.description ? ' — ' + p.description.substring(0,30) : ''}
+        </label>`).join('');
 }
 
 function updateExpPreview() {
@@ -949,9 +1027,9 @@ function updateExpPreview() {
 }
 
 async function addExpenseCode() {
-    const mat    = document.getElementById('expMat').value;
-    const desc   = document.getElementById('expDesc').value.trim();
-    const parent = document.getElementById('expParent').value;
+    const mat     = document.getElementById('expMat').value;
+    const desc    = document.getElementById('expDesc').value.trim();
+    const parents = Array.from(document.querySelectorAll('#expParent input:checked')).map(cb => cb.value);
     if (!mat) { showMsg('請選擇物料類型', 'error', 'expMsg'); return; }
 
     const serial = getNextExpenseSerial(mat);
@@ -972,9 +1050,9 @@ async function addExpenseCode() {
             grade: '-',
             description: desc
         };
-        if (parent) record.parent_code = parent;
         await DB.insert(record);
-        const parentHint = parent ? `，已歸屬至 ${parent}` : '';
+        if (parents.length) await Promise.all(parents.map(p => DB.addLink(code, p)));
+        const parentHint = parents.length ? `，已歸屬至 ${parents.join('、')}` : '';
         showMsg(`✓ 編碼 ${code} 新增成功${parentHint}！`, 'success', 'expMsg');
         resetExpForm();
         await loadCodes();
@@ -988,7 +1066,7 @@ async function addExpenseCode() {
 function resetExpForm() {
     document.getElementById('expMat').value = '';
     document.getElementById('expDesc').value = '';
-    document.getElementById('expParent').value = '';
+    document.querySelectorAll('#expParent input:checked').forEach(cb => cb.checked = false);
     document.getElementById('expPreview').textContent = '------';
     document.getElementById('expAddBtn').disabled = true;
     document.getElementById('expMsg').style.display = 'none';
@@ -1002,16 +1080,16 @@ async function deleteCode(code) {
         return;
     }
     // 有子項（被其他編碼當作 parent）檢查
-    const children = codesCache.filter(r => r.parent_code === code);
+    const children = getChildrenOf(code);
     if (children.length > 0) {
-        if (!confirm(`⚠ 編碼 ${code} 底下還有 ${children.length} 個子項（${children.slice(0,3).map(c=>c.code).join(', ')}${children.length>3?'…':''}）\n\n刪除後這些子項會變成「未歸類」。仍要刪除嗎？`)) return;
+        if (!confirm(`⚠ 編碼 ${code} 底下還有 ${children.length} 個子項（${children.slice(0,3).join(', ')}${children.length>3?'…':''}）\n\n刪除後這些子項會變成「未歸類」（若這些子項還有歸屬其他成品，不受影響）。仍要刪除嗎？`)) return;
     }
     if (!confirm(`確定要刪除編碼 ${code} 嗎？\n（會移入回收桶，可從「🗑 回收桶」還原）`)) return;
     showListMsg(`正在刪除 ${code}…`, 'info');
     try {
-        // 先清空所有子項的 parent_code
+        // 清掉子項對這個編碼的歸屬（子項若還歸屬其他成品則不受影響）
         if (children.length > 0) {
-            await Promise.all(children.map(c => DB.update(c.code, { parent_code: null })));
+            await DB.removeLinksForParent(code);
         }
         await DB.remove(code);
         selectedCodes.delete(code);
@@ -1040,31 +1118,35 @@ let currentPage = 1;
 let editingCode = null; // 目前正在編輯的 code
 const selectedCodes = new Set(); // 勾選的 codes
 
-// === BOM 成品歸屬對照（已改為 Supabase parent_code 欄位）===
-// 為了相容既有呼叫方，loadBomParentMap() 仍回傳 {code: parentCode} 形式，從 codesCache 即時組出
-function loadBomParentMap() {
-    const map = {};
-    codesCache.forEach(c => { if (c.parent_code) map[c.code] = c.parent_code; });
-    return map;
-}
-// 已改為 DB 持久化，保留空實作避免舊呼叫出錯
-function saveBomParentMap() { /* no-op，資料存在 DB */ }
-
+// === BOM 成品歸屬（多對多，存於 Supabase bom_links 表）===
+// 從「未歸類」列表指定一個成品：用「新增」而非「取代」，不影響已有的其他歸屬
 async function assignParent(childCode, parentCode) {
+    if (!parentCode) return;
     try {
-        await DB.update(childCode, { parent_code: parentCode || null });
-        const row = codesCache.find(r => r.code === childCode);
-        if (row) row.parent_code = parentCode || null;
+        await DB.addLink(childCode, parentCode);
+        linksCache.push({ child_code: childCode, parent_code: parentCode });
         renderTable();
     } catch (e) {
         alert('更新歸屬失敗：' + e.message);
     }
 }
-async function removeFromBomGroup(childCode) {
-    await assignParent(childCode, null);
+// parentCode 有指定時只移除該筆歸屬，否則移除全部歸屬
+async function removeFromBomGroup(childCode, parentCode) {
+    try {
+        if (parentCode) {
+            await DB.removeLink(childCode, parentCode);
+            linksCache = linksCache.filter(l => !(l.child_code === childCode && l.parent_code === parentCode));
+        } else {
+            await DB.removeLinksForChild(childCode);
+            linksCache = linksCache.filter(l => l.child_code !== childCode);
+        }
+        renderTable();
+    } catch (e) {
+        alert('移除歸屬失敗：' + e.message);
+    }
 }
 
-// 一次性遷移：把 localStorage 舊資料寫入 DB 後清空
+// 一次性遷移：把 localStorage 舊資料寫入 bom_links 後清空
 async function migrateBomMapToDb() {
     try {
         const raw = localStorage.getItem('bomParentMap');
@@ -1072,12 +1154,11 @@ async function migrateBomMapToDb() {
         const map = JSON.parse(raw);
         const entries = Object.entries(map).filter(([k, v]) => k && v && k !== v);
         if (!entries.length) { localStorage.removeItem('bomParentMap'); return; }
-        // 只對目前 DB 中尚無 parent_code 的編碼做遷移，避免覆寫
+        // 只對目前尚無任何歸屬的編碼做遷移，避免覆寫
         const promises = entries.map(async ([child, parent]) => {
-            const row = codesCache.find(r => r.code === child);
-            if (row && !row.parent_code) {
-                await DB.update(child, { parent_code: parent });
-                row.parent_code = parent;
+            if (getParentsOf(child).length === 0) {
+                await DB.addLink(child, parent);
+                linksCache.push({ child_code: child, parent_code: parent });
             }
         });
         await Promise.all(promises);
@@ -1087,7 +1168,7 @@ async function migrateBomMapToDb() {
 }
 
 // 自動偵測 BOM 歸屬：依匯入時間戳分批，同批內找成品作為 parent
-// 會寫入 DB 的 parent_code 欄位（同步至所有裝置）
+// 只補上目前完全沒有任何歸屬的品項，不影響已手動設定（含多筆）的歸屬
 async function autoDetectBomGroups() {
     const codes = codesCache;
     if (!codes.length) return;
@@ -1101,39 +1182,37 @@ async function autoDetectBomGroups() {
         batches[ts].push(c);
     });
 
-    const toUpdate = []; // [{code, parent}]
+    const toAdd = []; // [{code, parent}]
     Object.values(batches).forEach(batch => {
         if (batch.length < 2) return;
         const product = batch.find(c => c.attr === '成品');
         if (!product) return;
         batch.forEach(c => {
-            if (!c.parent_code) toUpdate.push({ code: c.code, parent: product.code });
+            if (getParentsOf(c.code).length === 0) toAdd.push({ code: c.code, parent: product.code });
         });
     });
 
     const products = codes.filter(c => c.attr === '成品');
     if (products.length > 0) {
         codes.forEach(c => {
-            if (c.parent_code || c.attr === '成品') return;
-            if (toUpdate.find(u => u.code === c.code)) return;
+            if (getParentsOf(c.code).length > 0 || c.attr === '成品') return;
+            if (toAdd.find(u => u.code === c.code)) return;
             let bestProduct = null, bestDiff = Infinity;
             products.forEach(p => {
                 const diff = Math.abs(new Date(c.created_at) - new Date(p.created_at));
                 if (diff < bestDiff) { bestDiff = diff; bestProduct = p; }
             });
             if (bestProduct && bestDiff < 3600000) {
-                toUpdate.push({ code: c.code, parent: bestProduct.code });
+                toAdd.push({ code: c.code, parent: bestProduct.code });
             }
         });
     }
 
-    if (!toUpdate.length) return;
-    // 批次寫入 DB
-    await Promise.all(toUpdate.map(async u => {
+    if (!toAdd.length) return;
+    await Promise.all(toAdd.map(async u => {
         try {
-            await DB.update(u.code, { parent_code: u.parent });
-            const row = codesCache.find(r => r.code === u.code);
-            if (row) row.parent_code = u.parent;
+            await DB.addLink(u.code, u.parent);
+            linksCache.push({ child_code: u.code, parent_code: u.parent });
         } catch (e) { console.warn('寫入歸屬失敗', u, e); }
     }));
 }
@@ -1198,7 +1277,7 @@ function updateSelectedBtn() {
         const select = document.getElementById('bulkParentSelect');
         const products = codesCache.filter(c => c.attr === '成品');
         const currentVal = select.value;
-        select.innerHTML = '<option value="">── 移出（未歸類）</option>' +
+        select.innerHTML = '<option value="">-- 選擇成品 --</option>' +
             products.map(p => `<option value="${p.code}" ${currentVal===p.code?'selected':''}>${p.code} · ${(p.description||'').substring(0,25)}</option>`).join('');
     } else {
         bar.classList.remove('show');
@@ -1233,9 +1312,8 @@ async function bulkDelete() {
     let success = 0, fail = 0;
     for (const code of codes) {
         try {
-            // 清掉子項的 parent_code
-            const kids = codesCache.filter(r => r.parent_code === code);
-            await Promise.all(kids.map(k => DB.update(k.code, { parent_code: null })));
+            // 清掉子項對這個編碼的歸屬
+            await DB.removeLinksForParent(code);
             await DB.remove(code);
             selectedCodes.delete(code);
             success++;
@@ -1252,34 +1330,56 @@ async function bulkDelete() {
     }
 }
 
+// 加入到指定成品（新增歸屬，不影響原本已有的其他歸屬）
 async function bulkReassign() {
     const targetParent = document.getElementById('bulkParentSelect').value;
+    if (!targetParent) { showMsg('請選擇要加入的成品', 'error'); return; }
     if (selectedCodes.size === 0) return;
 
     const products = new Set(codesCache.filter(c => c.attr === '成品').map(c => c.code));
-    const toMove = [...selectedCodes].filter(code => !products.has(code));
+    const toMove = [...selectedCodes].filter(code => !products.has(code) && code !== targetParent);
 
     if (toMove.length === 0) {
-        showMsg('勾選的都是成品，無法更換歸屬', 'error');
+        showMsg('勾選的都是成品或目標本身，無法加入', 'error');
         return;
     }
 
-    const label = targetParent ? `歸入 ${targetParent}` : '移出至未歸類';
-    if (!confirm(`確定將 ${toMove.length} 筆品項${label}？`)) return;
+    if (!confirm(`確定將 ${toMove.length} 筆品項加入成品 ${targetParent}？（不影響原本已有的其他歸屬）`)) return;
 
     showListMsg(`正在更新 ${toMove.length} 筆歸屬…`, 'info');
     let success = 0, fail = 0;
     await Promise.all(toMove.map(async code => {
         try {
-            await DB.update(code, { parent_code: targetParent || null });
-            const row = codesCache.find(r => r.code === code);
-            if (row) row.parent_code = targetParent || null;
+            if (!getParentsOf(code).includes(targetParent)) {
+                await DB.addLink(code, targetParent);
+                linksCache.push({ child_code: code, parent_code: targetParent });
+            }
             success++;
         } catch (e) { fail++; }
     }));
     clearSelection();
     renderTable();
-    showListMsg(fail === 0 ? `✓ 已將 ${success} 筆${label}` : `✓ 成功 ${success} / ✗ 失敗 ${fail}`, fail === 0 ? 'success' : 'error');
+    showListMsg(fail === 0 ? `✓ 已將 ${success} 筆加入 ${targetParent}` : `✓ 成功 ${success} / ✗ 失敗 ${fail}`, fail === 0 ? 'success' : 'error');
+}
+
+// 移除所勾選品項的「所有」成品歸屬
+async function bulkUnassignAll() {
+    if (selectedCodes.size === 0) return;
+    const codes = [...selectedCodes];
+    if (!confirm(`確定要移除這 ${codes.length} 筆品項的所有成品歸屬嗎？`)) return;
+
+    showListMsg(`正在移除 ${codes.length} 筆歸屬…`, 'info');
+    let success = 0, fail = 0;
+    await Promise.all(codes.map(async code => {
+        try {
+            await DB.removeLinksForChild(code);
+            linksCache = linksCache.filter(l => l.child_code !== code);
+            success++;
+        } catch (e) { fail++; }
+    }));
+    clearSelection();
+    renderTable();
+    showListMsg(fail === 0 ? `✓ 已移除 ${success} 筆歸屬` : `✓ 成功 ${success} / ✗ 失敗 ${fail}`, fail === 0 ? 'success' : 'error');
 }
 
 function exportSelectedCSV() {
@@ -1321,7 +1421,7 @@ async function saveEdit(origCode) {
     const newMatCode = matEl ? matEl.value : undefined;
     const newGrade = gradeEl ? gradeEl.value : undefined;
     const newDesc = descEl ? descEl.value.trim() : undefined;
-    const newParent = parentEl ? parentEl.value : undefined; // '' = 移出未歸類, 'A1XXXX' = 歸屬成品
+    const newParents = parentEl ? Array.from(parentEl.querySelectorAll('input:checked')).map(cb => cb.value) : undefined;
 
     // 驗證新編碼格式
     if (newCode && newCode !== origCode) {
@@ -1358,14 +1458,12 @@ async function saveEdit(origCode) {
                 selectedCodes.delete(origCode);
                 selectedCodes.add(newCode);
             }
-            // 編碼改變：更新所有把 origCode 當 parent 的子項
-            const kids = codesCache.filter(r => r.parent_code === origCode);
-            await Promise.all(kids.map(k => DB.update(k.code, { parent_code: newCode })));
-            // 新插入的那筆若原本有 parent，需要補上
-            const oldParent = oldItem && oldItem.parent_code;
-            if (oldParent && oldParent !== origCode) {
-                await DB.update(newCode, { parent_code: oldParent });
-            }
+            // 編碼改變：把 bom_links 裡所有引用 origCode 的地方（不論是子件還是父件）搬到 newCode
+            await DB.renameLinkRefs(origCode, newCode);
+            linksCache.forEach(l => {
+                if (l.child_code === origCode) l.child_code = newCode;
+                if (l.parent_code === origCode) l.parent_code = newCode;
+            });
             showMsg(`編碼已從 ${origCode} 更新為 ${newCode}`, 'success');
         } else {
             // 編碼不變：直接 PATCH
@@ -1378,10 +1476,10 @@ async function saveEdit(origCode) {
             showMsg(`編碼 ${origCode} 已更新`, 'success');
         }
 
-        // 更新 BOM 所屬成品
-        if (newParent !== undefined) {
+        // 更新 BOM 所屬成品（可複選）
+        if (newParents !== undefined) {
             const finalCode = (newCode && newCode !== origCode) ? newCode : origCode;
-            await DB.update(finalCode, { parent_code: newParent || null });
+            await setParentsOf(finalCode, newParents);
         }
 
         editingCode = null;
@@ -1525,12 +1623,12 @@ function renderTable() {
         let h = `<td><input type="checkbox" class="row-checkbox" data-code="${c.code}" ${checked} onchange="toggleSelect('${c.code}')"></td>`;
 
         if (isEditing) {
-            // 取得現有歸屬成品
-            const pMap = loadBomParentMap();
-            const curParent = pMap[c.code] && pMap[c.code] !== c.code ? pMap[c.code] : '';
+            // 取得現有歸屬成品（可複選）
+            const curParents = getParentsOf(c.code);
             const products = codesCache.filter(p => p.attr === '成品' && p.code !== c.code);
-            const parentOpts = `<option value="">── 移出（未歸類）</option>` +
-                products.map(p => `<option value="${p.code}" ${curParent===p.code?'selected':''}>${p.code}${p.description ? ' · ' + p.description.substring(0,18) : ''}</option>`).join('');
+            const parentCheckboxes = products.length
+                ? products.map(p => `<label style="display:block;font-size:0.78rem;padding:1px 0;cursor:pointer;"><input type="checkbox" value="${p.code}" ${curParents.includes(p.code)?'checked':''}> ${p.code}${p.description ? ' · ' + p.description.substring(0,18) : ''}</label>`).join('')
+                : '<span style="color:#999;font-size:0.78rem;">尚無成品可選</span>';
 
             // 編碼欄：input + 即時衝突提示 + 所屬成品 + 儲存/取消
             h += `<td style="min-width:220px;">
@@ -1541,10 +1639,10 @@ function renderTable() {
                     <span id="conflictHint_${c.code}" style="font-size:0.78rem;"></span>
                 </div>
                 <div style="margin-top:5px;">
-                    <label style="font-size:0.75rem;color:#666;display:block;margin-bottom:2px;">所屬成品</label>
-                    <select data-field="parent" style="padding:4px 6px;border:1px solid #ddd;border-radius:5px;font-size:0.8rem;width:100%;max-width:220px;">
-                        ${parentOpts}
-                    </select>
+                    <label style="font-size:0.75rem;color:#666;display:block;margin-bottom:2px;">所屬成品（可複選）</label>
+                    <div data-field="parent" style="max-height:90px;overflow-y:auto;border:1px solid #ddd;border-radius:5px;padding:4px 6px;font-size:0.8rem;width:100%;max-width:220px;background:#fff;">
+                        ${parentCheckboxes}
+                    </div>
                 </div>
                 <div style="display:flex;gap:6px;margin-top:6px;">
                     <button class="save-btn" onclick="saveEdit('${c.code}')">✓ 儲存</button>
@@ -1673,7 +1771,7 @@ function renderTable() {
 function renderSemiWithChildren(semiList, productCode, buildHeader, buildRow, renderItems) {
     let html = '';
     semiList.forEach(semi => {
-        const semiChildren = codesCache.filter(c => c.parent_code === semi.code);
+        const semiChildren = codesCache.filter(c => getParentsOf(c.code).includes(semi.code));
 
         // 半成品行本身 + 對成品的數量＋單位
         const semiRow = buildRow(semi).replace('</tr>', buildQtyUnitTds(productCode, semi.code) + '</tr>');
@@ -1700,35 +1798,38 @@ function renderSemiWithChildren(semiList, productCode, buildHeader, buildRow, re
 
 // === 依成品 BOM 分類渲染 ===
 function renderBomGrouped(sorted, cols, buildHeader, buildRow, renderItems, query) {
-    const parentMap = loadBomParentMap();
     const codeMap = {};
     codesCache.forEach(c => codeMap[c.code] = c);
 
-    // 建立成品 → 子項目對照
+    // 建立成品 → 子項目對照（一個子件可同時出現在多個成品群組底下）
     const productGroups = {}; // parentCode → { semi: [], mat: [] }
     const assigned = new Set();
     const sortedCodes = new Set(sorted.map(c => c.code));
 
-    // 找出所有成品（在 parentMap 中指向自己的 or attr=成品）
+    // 找出所有成品
     const allProducts = codesCache.filter(c => c.attr === '成品');
     const productCodes = new Set(allProducts.map(c => c.code));
 
     // 找出所有半成品 code 集合（供判斷下層物料的父層）
     const semiCodes = new Set(codesCache.filter(c => c.attr === '半成品').map(c => c.code));
 
-    // 依 parentMap 分類
+    // 依歸屬分類：每個子件可能有多個 parent，逐一分派到各自的成品群組
     sorted.forEach(c => {
-        const parent = parentMap[c.code];
-        if (parent && productCodes.has(parent)) {
-            if (!productGroups[parent]) productGroups[parent] = { product: codeMap[parent], semi: [], mat: [] };
+        const parents = getParentsOf(c.code);
+        let matchedAny = false;
+        parents.forEach(parent => {
             if (c.code === parent) return; // 成品本身不重複加入
-            if (c.attr === '半成品') productGroups[parent].semi.push(c);
-            else productGroups[parent].mat.push(c);
-            assigned.add(c.code);
-        } else if (parent && semiCodes.has(parent)) {
-            // 父層是半成品 → 標記為已歸類（不出現在未歸類區）
-            assigned.add(c.code);
-        }
+            if (productCodes.has(parent)) {
+                if (!productGroups[parent]) productGroups[parent] = { product: codeMap[parent], semi: [], mat: [] };
+                if (c.attr === '半成品') productGroups[parent].semi.push(c);
+                else productGroups[parent].mat.push(c);
+                matchedAny = true;
+            } else if (semiCodes.has(parent)) {
+                // 父層是半成品 → 標記為已歸類（不出現在未歸類區）
+                matchedAny = true;
+            }
+        });
+        if (matchedAny) assigned.add(c.code);
     });
 
     // 確保每個成品都有 group（即使沒有子項目）
@@ -2014,8 +2115,8 @@ async function submitQuickAdd(parentCode, attrCode) {
             grade: GRADE_LABEL[grade],
             description: desc
         };
-        if (attrCode !== 'A' && parentCode) record.parent_code = parentCode;
         await DB.insert(record);
+        if (attrCode !== 'A' && parentCode) await DB.addLink(code, parentCode);
 
         await loadCodes();
 
@@ -2023,7 +2124,7 @@ async function submitQuickAdd(parentCode, attrCode) {
         const parentItem = codesCache.find(c => c.code === parentCode);
         if (parentItem && parentItem.attr === '半成品') {
             openGroups.add('semi_' + parentCode);
-            if (parentItem.parent_code) openGroups.add('bom_' + parentItem.parent_code);
+            getParentsOf(parentCode).forEach(gp => openGroups.add('bom_' + gp));
         } else {
             openGroups.add('bom_' + parentCode);
         }
@@ -2053,11 +2154,9 @@ function buildPager(page, totalPages, totalItems) {
 }
 
 async function redetectGroups() {
-    if (!confirm('將清除目前所有手動設定的歸屬，重新依匯入時間自動偵測。確定嗎？')) return;
-    saveBomParentMap({}); // 清空
-    autoDetectBomGroups();
-    const map = loadBomParentMap();
-    const assigned = codesCache.filter(c => map[c.code]).length;
+    if (!confirm('將依匯入時間，為目前完全未歸類的品項自動偵測所屬成品（不影響已設定的歸屬）。確定嗎？')) return;
+    await autoDetectBomGroups();
+    const assigned = codesCache.filter(c => getParentsOf(c.code).length > 0).length;
     renderTable();
     showListMsg(`✓ 重新偵測完成，已歸屬 ${assigned} 筆，未歸類 ${codesCache.length - assigned} 筆`, 'success');
 }
@@ -2830,7 +2929,6 @@ async function confirmBom() {
         if (finalRecords.length > 0) await DB.insert(finalRecords);
 
         // 儲存 BOM 成品歸屬關係
-        const parentMap = loadBomParentMap();
         // 找出成品（level 0）的編碼
         // 找成品 parent：優先抓 level=0，找不到則用批次中唯一一筆 attr=成品 的項目
         let parentItem = bomItems.find(item => item.level !== undefined && String(item.level).trim() === '0' && item.generatedCode);
@@ -2843,14 +2941,10 @@ async function confirmBom() {
         }
         const parentCode = parentItem ? parentItem.generatedCode : null;
         if (parentCode) {
-            toAdd.forEach(item => {
-                if (item.generatedCode && item.generatedCode !== parentCode) {
-                    parentMap[item.generatedCode] = parentCode;
-                }
-            });
-            // 成品本身也標記（作為 parent 識別用，指向自己）
-            parentMap[parentCode] = parentCode;
-            saveBomParentMap(parentMap);
+            const linkTargets = toAdd
+                .map(item => item.generatedCode)
+                .filter(code => code && code !== parentCode);
+            await Promise.all(linkTargets.map(code => DB.addLink(code, parentCode)));
         }
 
         // 儲存原廠料號 + 品項名稱對照表（供下次匯入使用）
@@ -3320,7 +3414,7 @@ if ('serviceWorker' in navigator) {
 (async function init() {
     try {
         await loadCodes();
-        // 一次性遷移：localStorage 的舊 BOM 歸屬 → DB parent_code
+        // 一次性遷移：localStorage 的舊 BOM 歸屬 → DB bom_links
         await migrateBomMapToDb();
         await autoDetectBomGroups();
         refreshMaterialDropdowns();
