@@ -252,10 +252,10 @@
                 </div>
             </div>
             <div class="form-group" id="addParentSemiGroup" style="display:none;">
-                <label>所屬半成品（選填，單選；物料與半成品皆可選）</label>
-                <select id="addParentSemi" onchange="updatePreview()">
-                    <option value="">-- 不歸屬半成品 --</option>
-                </select>
+                <label>所屬半成品（選填，可複選；物料與半成品皆可選）</label>
+                <div id="addParentSemi" style="max-height:120px;overflow-y:auto;border:1px solid #ddd;border-radius:8px;padding:8px 10px;background:#fff;">
+                    <span style="color:#999;font-size:0.85rem;">尚無半成品可選</span>
+                </div>
             </div>
         </div>
         <div class="preview-box">
@@ -907,24 +907,28 @@ function populateAddParent() {
     populateAddParentSemi();
 }
 
-// 建立物料（C）或半成品（B）時可選的「所屬半成品」單選下拉；
-// 物料可掛在任一半成品底下，半成品也可以掛在另一個半成品底下（多層巢狀半成品結構）；屬性=成品時整組隱藏
+// 建立物料（C）或半成品（B）時可複選的「所屬半成品」核選方塊；
+// 物料可以同時掛在多個半成品底下（共用件），半成品也可以掛在另一個半成品底下（多層巢狀）；屬性=成品時整組隱藏
 function populateAddParentSemi() {
     const group = document.getElementById('addParentSemiGroup');
-    const sel = document.getElementById('addParentSemi');
-    if (!group || !sel) return;
+    const box = document.getElementById('addParentSemi');
+    if (!group || !box) return;
     const attr = document.getElementById('attr').value;
     if (attr !== 'C' && attr !== 'B') {
         group.style.display = 'none';
-        sel.value = '';
         return;
     }
     group.style.display = '';
-    const keep = sel.value;
+    const checked = new Set(Array.from(box.querySelectorAll('input:checked')).map(cb => cb.value));
     const semis = codesCache.filter(c => c.attr === '半成品');
-    sel.innerHTML = '<option value="">-- 不歸屬半成品 --</option>' +
-        semis.map(p => `<option value="${p.code}">${p.code}${p.description ? ' — ' + p.description.substring(0,30) : ''}</option>`).join('');
-    sel.value = keep;
+    if (!semis.length) {
+        box.innerHTML = '<span style="color:#999;font-size:0.85rem;">尚無半成品可選</span>';
+        return;
+    }
+    box.innerHTML = semis.map(p => `
+        <label style="display:block;font-size:0.85rem;padding:2px 0;cursor:pointer;">
+            <input type="checkbox" value="${p.code}" ${checked.has(p.code) ? 'checked' : ''}> ${p.code}${p.description ? ' — ' + p.description.substring(0,30) : ''}
+        </label>`).join('');
 }
 
 function updatePreview() {
@@ -1003,8 +1007,10 @@ async function addCode() {
     const parents = vals[0] !== 'A'
         ? Array.from(document.querySelectorAll('#addParent input:checked')).map(cb => cb.value)
         : [];
-    const parentSemi = (vals[0] === 'C' || vals[0] === 'B') ? document.getElementById('addParentSemi').value : '';
-    if (parentSemi) parents.push(parentSemi);
+    const parentSemis = (vals[0] === 'C' || vals[0] === 'B')
+        ? Array.from(document.querySelectorAll('#addParentSemi input:checked')).map(cb => cb.value)
+        : [];
+    parents.push(...parentSemis);
 
     try {
         await DB.insert({ code, attr: ATTR_LABEL[vals[0]], source: SOURCE_LABEL[vals[1]], material_code: vals[2], material: materialLabel, grade: GRADE_LABEL[vals[3]], description: desc });
@@ -1028,6 +1034,7 @@ function resetForm() {
     document.getElementById('serial').value = '';
     document.getElementById('desc').value = '';
     document.querySelectorAll('#addParent input:checked').forEach(cb => cb.checked = false);
+    document.querySelectorAll('#addParentSemi input:checked').forEach(cb => cb.checked = false);
     populateAddParent();
     document.getElementById('preview').textContent = '------';
     document.getElementById('addBtn').disabled = true;
