@@ -880,6 +880,7 @@ function checkDescDuplicate() {
 }
 
 // 建立編碼時可複選的「所屬成品」；屬性=成品時不適用（成品本身不需要歸屬）
+// 物料（C）可以掛在成品或半成品底下；半成品（B）只能掛在成品底下
 function populateAddParent() {
     const box = document.getElementById('addParent');
     if (!box) return;
@@ -889,14 +890,15 @@ function populateAddParent() {
         return;
     }
     const checked = new Set(Array.from(box.querySelectorAll('input:checked')).map(cb => cb.value));
-    const products = codesCache.filter(c => c.attr === '成品');
+    const validAttrs = attr === 'C' ? ['成品', '半成品'] : ['成品'];
+    const products = codesCache.filter(c => validAttrs.includes(c.attr));
     if (!products.length) {
         box.innerHTML = '<span style="color:#999;font-size:0.85rem;">尚無成品可選</span>';
         return;
     }
     box.innerHTML = products.map(p => `
         <label style="display:block;font-size:0.85rem;padding:2px 0;cursor:pointer;">
-            <input type="checkbox" value="${p.code}" ${checked.has(p.code) ? 'checked' : ''}> ${p.code}${p.description ? ' — ' + p.description.substring(0,30) : ''}
+            <input type="checkbox" value="${p.code}" ${checked.has(p.code) ? 'checked' : ''}> ${p.attr === '半成品' ? '[半成品] ' : ''}${p.code}${p.description ? ' — ' + p.description.substring(0,30) : ''}
         </label>`).join('');
 }
 
@@ -1658,11 +1660,12 @@ function renderTable() {
         let h = `<td><input type="checkbox" class="row-checkbox" data-code="${c.code}" ${checked} onchange="toggleSelect('${c.code}')"></td>`;
 
         if (isEditing) {
-            // 取得現有歸屬成品（可複選）
+            // 取得現有歸屬成品（可複選）；物料（C）可掛在成品或半成品底下，半成品（B）只能掛在成品底下
             const curParents = getParentsOf(c.code);
-            const products = codesCache.filter(p => p.attr === '成品' && p.code !== c.code);
+            const validParentAttrs = c.attr === '物料' ? ['成品', '半成品'] : ['成品'];
+            const products = codesCache.filter(p => validParentAttrs.includes(p.attr) && p.code !== c.code);
             const parentCheckboxes = products.length
-                ? products.map(p => `<label style="display:block;font-size:0.78rem;padding:1px 0;cursor:pointer;"><input type="checkbox" value="${p.code}" ${curParents.includes(p.code)?'checked':''}> ${p.code}${p.description ? ' · ' + p.description.substring(0,18) : ''}</label>`).join('')
+                ? products.map(p => `<label style="display:block;font-size:0.78rem;padding:1px 0;cursor:pointer;"><input type="checkbox" value="${p.code}" ${curParents.includes(p.code)?'checked':''}> ${p.attr === '半成品' ? '[半成品] ' : ''}${p.code}${p.description ? ' · ' + p.description.substring(0,18) : ''}</label>`).join('')
                 : '<span style="color:#999;font-size:0.78rem;">尚無成品可選</span>';
 
             // 編碼欄：input + 即時衝突提示 + 所屬成品 + 儲存/取消
