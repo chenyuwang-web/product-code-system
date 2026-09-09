@@ -1837,43 +1837,63 @@ function renderSemiWithChildren(semiList, parentCode, buildHeader, buildRow, ren
     depth = depth || 0;
     let html = '';
     semiList.forEach(semi => {
-        const children = codesCache.filter(c => getParentsOf(c.code).includes(semi.code));
-        const childSemis = children.filter(c => c.attr === '半成品');
-        const childMats = children.filter(c => c.attr !== '半成品');
-
         // 半成品行本身 + 對直接上層的數量＋單位
         const semiRow = buildRow(semi).replace('</tr>', buildQtyUnitTds(parentCode, semi.code) + '</tr>');
 
         html += `<div class="bom-semi-item" style="margin-left:${depth * 16}px;">`;
         html += BOM_UNIT_DATALIST + `<table style="margin:0;"><thead><tr>${buildHeader()}${QTY_UNIT_TH}</tr></thead><tbody>${semiRow}</tbody></table>`;
-
-        // 下層半成品（巢狀）
-        html += `<div class="bom-semi-children">
-            <div class="bom-sub-label semi" style="font-size:0.78rem;">
-                <span>半成品${childSemis.length > 0 ? `（${childSemis.length}）` : ''}</span>
-                <button class="add-in-group-btn" onclick="showQuickAdd('${semi.code}','B')">＋ 新增</button>
-            </div>
-            <div id="quickAdd_${semi.code}_B"></div>
-            ${childSemis.length > 0
-                ? renderSemiWithChildren(childSemis, semi.code, buildHeader, buildRow, renderItems, depth + 1)
-                : '<p style="color:#aaa;font-size:0.8rem;padding:4px 10px;margin:0;">尚無下層半成品</p>'}
-        </div>`;
-
-        // 半成品下的物料 + 對半成品的使用數量
-        html += `<div class="bom-semi-children">
-            <div class="bom-sub-label mat" style="font-size:0.78rem;">
-                <span>物料${childMats.length > 0 ? `（${childMats.length}）` : ''}</span>
-                <button class="add-in-group-btn" onclick="showQuickAdd('${semi.code}','C')">＋ 新增</button>
-            </div>
-            <div id="quickAdd_${semi.code}_C"></div>
-            ${childMats.length > 0
-                ? renderBomSubItems(childMats, semi.code, buildHeader, buildRow, false)
-                : '<p style="color:#aaa;font-size:0.8rem;padding:4px 10px;margin:0;">尚無物料</p>'}
-        </div>`;
-
+        html += renderSemiChildrenBlock(semi, buildHeader, buildRow, depth);
         html += `</div>`;
     });
     return html;
+}
+
+// 半成品底下的巢狀子項（半成品 + 物料兩區塊），抽出來讓「未歸類項目」裡
+// 尚未歸屬成品的孤兒半成品也能展開顯示自己的子項，不用重複畫一次它自己那一行
+function renderSemiChildrenBlock(semi, buildHeader, buildRow, depth) {
+    const children = codesCache.filter(c => getParentsOf(c.code).includes(semi.code));
+    const childSemis = children.filter(c => c.attr === '半成品');
+    const childMats = children.filter(c => c.attr !== '半成品');
+
+    let html = '';
+    // 下層半成品（巢狀）
+    html += `<div class="bom-semi-children">
+        <div class="bom-sub-label semi" style="font-size:0.78rem;">
+            <span>半成品${childSemis.length > 0 ? `（${childSemis.length}）` : ''}</span>
+            <button class="add-in-group-btn" onclick="showQuickAdd('${semi.code}','B')">＋ 新增</button>
+        </div>
+        <div id="quickAdd_${semi.code}_B"></div>
+        ${childSemis.length > 0
+            ? renderSemiWithChildren(childSemis, semi.code, buildHeader, buildRow, null, depth + 1)
+            : '<p style="color:#aaa;font-size:0.8rem;padding:4px 10px;margin:0;">尚無下層半成品</p>'}
+    </div>`;
+
+    // 半成品下的物料 + 對半成品的使用數量
+    html += `<div class="bom-semi-children">
+        <div class="bom-sub-label mat" style="font-size:0.78rem;">
+            <span>物料${childMats.length > 0 ? `（${childMats.length}）` : ''}</span>
+            <button class="add-in-group-btn" onclick="showQuickAdd('${semi.code}','C')">＋ 新增</button>
+        </div>
+        <div id="quickAdd_${semi.code}_C"></div>
+        ${childMats.length > 0
+            ? renderBomSubItems(childMats, semi.code, buildHeader, buildRow, false)
+            : '<p style="color:#aaa;font-size:0.8rem;padding:4px 10px;margin:0;">尚無物料</p>'}
+    </div>`;
+    return html;
+}
+
+// 找出某代碼底下所有子孫代碼（含多層巢狀半成品），供「未歸類項目」判斷哪些子項
+// 已經被畫在孤兒半成品底下、不用再重複列一次平面列
+function collectDescendantCodes(code, seen) {
+    seen = seen || new Set();
+    codesCache.forEach(c => {
+        if (seen.has(c.code)) return;
+        if (getParentsOf(c.code).includes(code)) {
+            seen.add(c.code);
+            collectDescendantCodes(c.code, seen);
+        }
+    });
+    return seen;
 }
 
 // === 依成品 BOM 分類渲染 ===
@@ -1893,6 +1913,22 @@ function renderBomGrouped(sorted, cols, buildHeader, buildRow, renderItems, quer
     // 找出所有半成品 code 集合（供判斷下層物料的父層）
     const semiCodes = new Set(codesCache.filter(c => c.attr === '半成品').map(c => c.code));
 
+    // 半成品是否「往上追溯得到成品」（半成品可以掛在另一個半成品底下，
+    // 若一路往上都沒有接到任何成品，代表是孤兒半成品，樹狀圖不會遞迴畫到它，
+    // 這種情況下它的子項不能標記為已歸類，否則會直接消失、兩邊都看不到）
+    const productAncestorCache = new Map();
+    function hasProductAncestor(code, seen) {
+        if (productAncestorCache.has(code)) return productAncestorCache.get(code);
+        seen = seen || new Set();
+        if (seen.has(code)) return false; // 避免循環參照無窮遞迴
+        seen.add(code);
+        const result = getParentsOf(code).some(p =>
+            productCodes.has(p) || (semiCodes.has(p) && hasProductAncestor(p, seen))
+        );
+        productAncestorCache.set(code, result);
+        return result;
+    }
+
     // 依歸屬分類：每個子件可能有多個 parent，逐一分派到各自的成品群組
     sorted.forEach(c => {
         const parents = getParentsOf(c.code);
@@ -1904,10 +1940,12 @@ function renderBomGrouped(sorted, cols, buildHeader, buildRow, renderItems, quer
                 if (c.attr === '半成品') productGroups[parent].semi.push(c);
                 else productGroups[parent].mat.push(c);
                 matchedAny = true;
-            } else if (semiCodes.has(parent)) {
-                // 父層是半成品 → 標記為已歸類（不出現在未歸類區）
+            } else if (semiCodes.has(parent) && hasProductAncestor(parent)) {
+                // 父層是「有掛在成品下」的半成品 → 會被遞迴渲染，標記為已歸類
                 matchedAny = true;
             }
+            // 父層是孤兒半成品（自己也還沒歸屬成品）→ 不標記已歸類，
+            // 讓它跟著孤兒半成品一起出現在「未歸類項目」區塊裡（見 renderUnassignedTable）
         });
         if (matchedAny) assigned.add(c.code);
     });
@@ -2007,6 +2045,21 @@ function renderBomGrouped(sorted, cols, buildHeader, buildRow, renderItems, quer
 function renderUnassignedTable(items, cols, buildHeader, buildRow) {
     // 取得所有成品做為歸類選項
     const products = codesCache.filter(c => c.attr === '成品');
+    const assignSelectTd = (code) => `<td><select class="assign-parent-select" onchange="assignParent('${code}', this.value)">
+        <option value="">-- 選擇成品 --</option>
+        ${products.map(p => `<option value="${p.code}">${p.code} ${(p.description||'').substring(0,20)}</option>`).join('')}
+    </select></td>`;
+
+    // 尚未歸屬成品、但底下已經有子項的孤兒半成品：獨立展開顯示，
+    // 它的子孫代碼就不再重複列在下面的平面表格裡（否則會看起來像重複兩份）
+    const orphanSemisWithChildren = items.filter(c =>
+        c.attr === '半成品' && codesCache.some(x => getParentsOf(x.code).includes(c.code)));
+    const nestedDescendantCodes = new Set();
+    orphanSemisWithChildren.forEach(semi => {
+        collectDescendantCodes(semi.code).forEach(code => nestedDescendantCodes.add(code));
+    });
+    const flatItems = items.filter(c => !orphanSemisWithChildren.includes(c) && !nestedDescendantCodes.has(c.code));
+
     let headerH = '<th class="select-all-wrap"><input type="checkbox" onchange="toggleSelectAll(this.checked)" title="全選"></th>';
     headerH += '<th>編碼</th>';
     if (cols.source) headerH += '<th>來源</th>';
@@ -2016,18 +2069,25 @@ function renderUnassignedTable(items, cols, buildHeader, buildRow) {
     if (cols.date) headerH += '<th>建立日期</th>';
     headerH += '<th>操作</th><th>歸類至成品</th>';
 
-    let tbody = '';
-    items.forEach(c => {
-        const row = buildRow(c);
-        // 在 </tr> 前插入歸類下拉
-        const selectHtml = `<td><select class="assign-parent-select" onchange="assignParent('${c.code}', this.value)">
-            <option value="">-- 選擇成品 --</option>
-            ${products.map(p => `<option value="${p.code}">${p.code} ${(p.description||'').substring(0,20)}</option>`).join('')}
-        </select></td>`;
-        tbody += row.replace('</tr>', selectHtml + '</tr>');
-    });
+    let html = '';
 
-    return `<table><thead><tr>${headerH}</tr></thead><tbody>${tbody}</tbody></table>`;
+    if (orphanSemisWithChildren.length > 0) {
+        html += `<p style="font-size:0.82rem;color:#e65100;margin:0 0 8px;">⚠ 以下半成品底下已經有子項，但自己還沒歸屬任何成品，請盡快指派，否則子項不好追蹤：</p>`;
+        orphanSemisWithChildren.forEach(semi => {
+            const rowWithSelect = buildRow(semi).replace('</tr>', assignSelectTd(semi.code) + '</tr>');
+            html += `<div class="bom-semi-item" style="margin-bottom:10px;">`;
+            html += `<table style="margin:0;"><thead><tr>${headerH}</tr></thead><tbody>${rowWithSelect}</tbody></table>`;
+            html += renderSemiChildrenBlock(semi, buildHeader, buildRow, 0);
+            html += `</div>`;
+        });
+    }
+
+    if (flatItems.length > 0) {
+        const tbody = flatItems.map(c => buildRow(c).replace('</tr>', assignSelectTd(c.code) + '</tr>')).join('');
+        html += `<table><thead><tr>${headerH}</tr></thead><tbody>${tbody}</tbody></table>`;
+    }
+
+    return html;
 }
 
 // === BOM 使用數量（localStorage） ===
@@ -2168,7 +2228,9 @@ function expandAncestorProductGroups(code, seen) {
     seen.add(code);
     const item = codesCache.find(c => c.code === code);
     if (item && item.attr === '成品') { openGroups.add('bom_' + code); return; }
-    getParentsOf(code).forEach(gp => expandAncestorProductGroups(gp, seen));
+    const parents = getParentsOf(code);
+    if (!parents.length) { openGroups.add('bom_unassigned'); return; } // 一路往上都沒有成品：孤兒半成品，展開未歸類區塊
+    parents.forEach(gp => expandAncestorProductGroups(gp, seen));
 }
 
 function cancelQuickAdd(parentCode, attrCode) {
