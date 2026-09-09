@@ -252,7 +252,7 @@
                 </div>
             </div>
             <div class="form-group" id="addParentSemiGroup" style="display:none;">
-                <label>所屬半成品（選填，單選；僅物料可選）</label>
+                <label>所屬半成品（選填，單選；物料與半成品皆可選）</label>
                 <select id="addParentSemi" onchange="updatePreview()">
                     <option value="">-- 不歸屬半成品 --</option>
                 </select>
@@ -907,13 +907,14 @@ function populateAddParent() {
     populateAddParentSemi();
 }
 
-// 建立物料（C）時可選的「所屬半成品」單選下拉；屬性≠物料時整組隱藏
+// 建立物料（C）或半成品（B）時可選的「所屬半成品」單選下拉；
+// 物料可掛在任一半成品底下，半成品也可以掛在另一個半成品底下（多層巢狀半成品結構）；屬性=成品時整組隱藏
 function populateAddParentSemi() {
     const group = document.getElementById('addParentSemiGroup');
     const sel = document.getElementById('addParentSemi');
     if (!group || !sel) return;
     const attr = document.getElementById('attr').value;
-    if (attr !== 'C') {
+    if (attr !== 'C' && attr !== 'B') {
         group.style.display = 'none';
         sel.value = '';
         return;
@@ -1002,7 +1003,7 @@ async function addCode() {
     const parents = vals[0] !== 'A'
         ? Array.from(document.querySelectorAll('#addParent input:checked')).map(cb => cb.value)
         : [];
-    const parentSemi = vals[0] === 'C' ? document.getElementById('addParentSemi').value : '';
+    const parentSemi = (vals[0] === 'C' || vals[0] === 'B') ? document.getElementById('addParentSemi').value : '';
     if (parentSemi) parents.push(parentSemi);
 
     try {
@@ -1688,7 +1689,7 @@ function renderTable() {
         if (isEditing) {
             // 取得現有歸屬成品（可複選）；物料（C）可掛在成品或半成品底下，半成品（B）只能掛在成品底下
             const curParents = getParentsOf(c.code);
-            const validParentAttrs = c.attr === '物料' ? ['成品', '半成品'] : ['成品'];
+            const validParentAttrs = (c.attr === '物料' || c.attr === '半成品') ? ['成品', '半成品'] : ['成品'];
             const products = codesCache.filter(p => validParentAttrs.includes(p.attr) && p.code !== c.code);
             const parentCheckboxes = products.length
                 ? products.map(p => `<label style="display:block;font-size:0.78rem;padding:1px 0;cursor:pointer;"><input type="checkbox" value="${p.code}" ${curParents.includes(p.code)?'checked':''}> ${p.attr === '半成品' ? '[半成品] ' : ''}${p.code}${p.description ? ' · ' + p.description.substring(0,18) : ''}</label>`).join('')
@@ -1830,28 +1831,43 @@ function renderTable() {
     updateSelectedBtn();
 }
 
-// === 半成品可展開子項渲染（含數量欄）===
-// productCode: 該半成品所屬的成品編碼
-function renderSemiWithChildren(semiList, productCode, buildHeader, buildRow, renderItems) {
+// === 半成品可展開子項渲染（含數量欄，支援半成品掛半成品的多層巢狀）===
+// parentCode：這一層半成品的「直接」上層代碼，可能是成品，也可能是另一個半成品
+function renderSemiWithChildren(semiList, parentCode, buildHeader, buildRow, renderItems, depth) {
+    depth = depth || 0;
     let html = '';
     semiList.forEach(semi => {
-        const semiChildren = codesCache.filter(c => getParentsOf(c.code).includes(semi.code));
+        const children = codesCache.filter(c => getParentsOf(c.code).includes(semi.code));
+        const childSemis = children.filter(c => c.attr === '半成品');
+        const childMats = children.filter(c => c.attr !== '半成品');
 
-        // 半成品行本身 + 對成品的數量＋單位
-        const semiRow = buildRow(semi).replace('</tr>', buildQtyUnitTds(productCode, semi.code) + '</tr>');
+        // 半成品行本身 + 對直接上層的數量＋單位
+        const semiRow = buildRow(semi).replace('</tr>', buildQtyUnitTds(parentCode, semi.code) + '</tr>');
 
-        html += `<div class="bom-semi-item">`;
+        html += `<div class="bom-semi-item" style="margin-left:${depth * 16}px;">`;
         html += BOM_UNIT_DATALIST + `<table style="margin:0;"><thead><tr>${buildHeader()}${QTY_UNIT_TH}</tr></thead><tbody>${semiRow}</tbody></table>`;
+
+        // 下層半成品（巢狀）
+        html += `<div class="bom-semi-children">
+            <div class="bom-sub-label semi" style="font-size:0.78rem;">
+                <span>半成品${childSemis.length > 0 ? `（${childSemis.length}）` : ''}</span>
+                <button class="add-in-group-btn" onclick="showQuickAdd('${semi.code}','B')">＋ 新增</button>
+            </div>
+            <div id="quickAdd_${semi.code}_B"></div>
+            ${childSemis.length > 0
+                ? renderSemiWithChildren(childSemis, semi.code, buildHeader, buildRow, renderItems, depth + 1)
+                : '<p style="color:#aaa;font-size:0.8rem;padding:4px 10px;margin:0;">尚無下層半成品</p>'}
+        </div>`;
 
         // 半成品下的物料 + 對半成品的使用數量
         html += `<div class="bom-semi-children">
             <div class="bom-sub-label mat" style="font-size:0.78rem;">
-                <span>物料${semiChildren.length > 0 ? `（${semiChildren.length}）` : ''}</span>
+                <span>物料${childMats.length > 0 ? `（${childMats.length}）` : ''}</span>
                 <button class="add-in-group-btn" onclick="showQuickAdd('${semi.code}','C')">＋ 新增</button>
             </div>
             <div id="quickAdd_${semi.code}_C"></div>
-            ${semiChildren.length > 0
-                ? renderBomSubItems(semiChildren, semi.code, buildHeader, buildRow, false)
+            ${childMats.length > 0
+                ? renderBomSubItems(childMats, semi.code, buildHeader, buildRow, false)
                 : '<p style="color:#aaa;font-size:0.8rem;padding:4px 10px;margin:0;">尚無物料</p>'}
         </div>`;
 
@@ -2144,6 +2160,17 @@ function updateQaPreview(parentCode, attrCode) {
     }
 }
 
+// 從任一代碼往上遞迴找出所有屬於「成品」的祖先，展開其 BOM 群組
+// （半成品可以掛在另一個半成品底下，所以不能只看直接上層）
+function expandAncestorProductGroups(code, seen) {
+    seen = seen || new Set();
+    if (seen.has(code)) return;
+    seen.add(code);
+    const item = codesCache.find(c => c.code === code);
+    if (item && item.attr === '成品') { openGroups.add('bom_' + code); return; }
+    getParentsOf(code).forEach(gp => expandAncestorProductGroups(gp, seen));
+}
+
 function cancelQuickAdd(parentCode, attrCode) {
     const container = document.getElementById(`quickAdd_${parentCode}_${attrCode}`);
     if (container) container.innerHTML = '';
@@ -2184,14 +2211,8 @@ async function submitQuickAdd(parentCode, attrCode) {
 
         await loadCodes();
 
-        // 保持群組展開（父層為半成品時，同時展開其上層成品群組）
-        const parentItem = codesCache.find(c => c.code === parentCode);
-        if (parentItem && parentItem.attr === '半成品') {
-            openGroups.add('semi_' + parentCode);
-            getParentsOf(parentCode).forEach(gp => openGroups.add('bom_' + gp));
-        } else {
-            openGroups.add('bom_' + parentCode);
-        }
+        // 保持群組展開：往上一路找到真正的成品群組再展開（半成品可能巢狀多層）
+        expandAncestorProductGroups(parentCode);
         showListMsg(`✓ 編碼 ${code} 已新增！`, 'success');
         renderTable();
     } catch (err) {
