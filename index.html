@@ -2075,12 +2075,21 @@ function renderBomGrouped(sorted, cols, buildHeader, buildRow, renderItems, quer
 }
 
 function renderUnassignedTable(items, cols, buildHeader, buildRow) {
-    // 取得所有成品做為歸類選項
-    const products = codesCache.filter(c => c.attr === '成品');
-    const assignSelectTd = (code) => `<td><select class="assign-parent-select" onchange="assignParent('${code}', this.value)">
-        <option value="">-- 選擇成品 --</option>
-        ${products.map(p => `<option value="${p.code}">${p.code} ${(p.description||'').substring(0,20)}</option>`).join('')}
-    </select></td>`;
+    // 取得歸類選項：成品皆可選；物料、半成品本身還可以選另一個半成品當上層
+    const productsOnly = codesCache.filter(c => c.attr === '成品');
+    const semisOnly = codesCache.filter(c => c.attr === '半成品');
+    const assignSelectTd = (item) => {
+        const opts = productsOnly.map(p => `<option value="${p.code}">${p.code} ${(p.description||'').substring(0,20)}</option>`);
+        if (item.attr === '物料' || item.attr === '半成品') {
+            semisOnly.filter(s => s.code !== item.code).forEach(s => {
+                opts.push(`<option value="${s.code}">[半成品] ${s.code} ${(s.description||'').substring(0,20)}</option>`);
+            });
+        }
+        return `<td><select class="assign-parent-select" onchange="assignParent('${item.code}', this.value)">
+            <option value="">-- 選擇成品／半成品 --</option>
+            ${opts.join('')}
+        </select></td>`;
+    };
 
     // 尚未歸屬成品、但底下已經有子項的孤兒半成品：獨立展開顯示，
     // 它的子孫代碼就不再重複列在下面的平面表格裡（否則會看起來像重複兩份）
@@ -2099,14 +2108,14 @@ function renderUnassignedTable(items, cols, buildHeader, buildRow) {
     if (cols.grade) headerH += '<th>品別</th>';
     if (cols.desc) headerH += '<th>描述</th>';
     if (cols.date) headerH += '<th>建立日期</th>';
-    headerH += '<th>操作</th><th>歸類至成品</th>';
+    headerH += '<th>操作</th><th>歸類至成品／半成品</th>';
 
     let html = '';
 
     if (orphanSemisWithChildren.length > 0) {
         html += `<p style="font-size:0.82rem;color:#e65100;margin:0 0 8px;">⚠ 以下半成品底下已經有子項，但自己還沒歸屬任何成品，請盡快指派，否則子項不好追蹤：</p>`;
         orphanSemisWithChildren.forEach(semi => {
-            const rowWithSelect = buildRow(semi).replace('</tr>', assignSelectTd(semi.code) + '</tr>');
+            const rowWithSelect = buildRow(semi).replace('</tr>', assignSelectTd(semi) + '</tr>');
             html += `<div class="bom-semi-item" style="margin-bottom:10px;">`;
             html += `<table style="margin:0;"><thead><tr>${headerH}</tr></thead><tbody>${rowWithSelect}</tbody></table>`;
             html += renderSemiChildrenBlock(semi, buildHeader, buildRow, 0);
@@ -2115,7 +2124,7 @@ function renderUnassignedTable(items, cols, buildHeader, buildRow) {
     }
 
     if (flatItems.length > 0) {
-        const tbody = flatItems.map(c => buildRow(c).replace('</tr>', assignSelectTd(c.code) + '</tr>')).join('');
+        const tbody = flatItems.map(c => buildRow(c).replace('</tr>', assignSelectTd(c) + '</tr>')).join('');
         html += `<table><thead><tr>${headerH}</tr></thead><tbody>${tbody}</tbody></table>`;
     }
 
