@@ -1143,6 +1143,30 @@ function resetExpForm() {
     document.getElementById('expMsg').style.display = 'none';
 }
 
+// 從 BOM 樹狀圖裡的某個上層底下移出一個子項：只解除這一個歸屬關係，
+// 不會刪除編碼本身，若它同時掛在其他成品/半成品底下也完全不受影響
+// （共用件現在可以同時歸屬多個上層，「刪除」不該把其他地方也一起清掉）
+async function unassignFromParent(childCode, parentCode) {
+    if (!confirm(`確定要把 ${childCode} 從 ${parentCode} 底下移出嗎？\n（只移除這一個歸屬關係，若它還掛在其他成品/半成品底下不受影響；如果要整個刪除這個編碼，請到「未歸類項目」或平面清單裡用「刪除」。）`)) return;
+    try {
+        await DB.removeLink(childCode, parentCode);
+        linksCache = linksCache.filter(l => !(l.child_code === childCode && l.parent_code === parentCode));
+        showListMsg(`✓ 已將 ${childCode} 從 ${parentCode} 移出`, 'success');
+        renderTable();
+    } catch (e) {
+        showListMsg(`✗ 移出失敗：${e.message || e}`, 'error');
+    }
+}
+
+// 把某一列 row 裡原本的「刪除」按鈕換成「移出」，用在 BOM 樹狀圖裡巢狀顯示的子項
+// （成品本身沒有上層可移出，parentCode 會等於自己的 code，這種情況維持原本的完整刪除）
+function withUnassignAction(rowHtml, childCode, parentCode) {
+    if (!parentCode || childCode === parentCode) return rowHtml;
+    const deleteBtnRe = new RegExp(`<button class="delete-btn" onclick="deleteCode\\('${childCode}'\\)">刪除</button>`);
+    return rowHtml.replace(deleteBtnRe,
+        `<button class="delete-btn" onclick="unassignFromParent('${childCode}','${parentCode}')" title="只移出這個歸屬關係，不刪除編碼本身">移出</button>`);
+}
+
 async function deleteCode(code) {
     const row = codesCache.find(r => r.code === code);
     // 鎖定檢查
@@ -1845,7 +1869,8 @@ function renderSemiWithChildren(semiList, parentCode, buildHeader, buildRow, ren
     let html = '';
     semiList.forEach(semi => {
         // 半成品行本身 + 對直接上層的數量＋單位
-        const semiRow = buildRow(semi).replace('</tr>', buildQtyUnitTds(parentCode, semi.code) + '</tr>');
+        const semiRow = withUnassignAction(buildRow(semi), semi.code, parentCode)
+            .replace('</tr>', buildQtyUnitTds(parentCode, semi.code) + '</tr>');
 
         html += `<div class="bom-semi-item" style="margin-left:${depth * 16}px;">`;
         html += BOM_UNIT_DATALIST + `<table style="margin:0;"><thead><tr>${buildHeader()}${QTY_UNIT_TH}</tr></thead><tbody>${semiRow}</tbody></table>`;
@@ -2156,7 +2181,7 @@ function renderBomSubItems(items, parentCode, buildHeader, buildRow, skipQty) {
     if (items.length === 0) return '';
     const extraTh = skipQty ? '' : QTY_UNIT_TH;
     const rows = items.map(c => {
-        const base = buildRow(c);
+        const base = withUnassignAction(buildRow(c), c.code, parentCode);
         if (skipQty) return base;
         return base.replace('</tr>', buildQtyUnitTds(parentCode, c.code) + '</tr>');
     }).join('');
