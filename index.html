@@ -1477,31 +1477,20 @@ async function bulkUnassignAll() {
     showListMsg(fail === 0 ? `✓ 已移除 ${success} 筆歸屬` : `✓ 成功 ${success} / ✗ 失敗 ${fail}`, fail === 0 ? 'success' : 'error');
 }
 
-// 勾選成品／半成品時，自動把它底下所有子項（含孫階，例如半成品底下的物料）一起帶入匯出，
-// 不用把每一顆物料都勾一次；子項本身也可能有自己的子項（半成品掛半成品），要一路往下展開
-function expandWithDescendants(codes) {
-    const result = new Set(codes);
-    const stack = [...codes];
-    while (stack.length) {
-        const code = stack.pop();
-        getChildrenOf(code).forEach(childCode => {
-            if (!result.has(childCode)) { result.add(childCode); stack.push(childCode); }
-        });
-    }
-    return result;
-}
-
 function exportSelectedCSV() {
     if (selectedCodes.size === 0) return;
-    const expanded = expandWithDescendants(selectedCodes);
-    const rows = walkBomTree().filter(r => expanded.has(r.item.code));
+    // 直接把勾選的項目當作各自的根重新走訪一遍，只長出它們自己的子樹；
+    // 不能用「把全部資料的樹狀圖過濾出勾選的」這種做法——共用件會把不相關的
+    // 成品分支也一起帶進來，混在結果裡，勾的項目自己反而被擠到很後面找不到
+    const rows = walkFromRoots(selectedCodes);
+    const exportedCount = new Set(rows.map(r => r.item.code)).size;
     const body = rows.map(bomRowToCsvLine).join('\n');
     const blob = new Blob(['\uFEFF' + BOM_CSV_HEADER + body], {type: 'text/csv;charset=utf-8;'});
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-    const extra = expanded.size - selectedCodes.size;
-    const suffix = extra > 0 ? `已選${selectedCodes.size}筆(含子件共${expanded.size}筆)` : `已選${selectedCodes.size}筆`;
+    const extra = exportedCount - selectedCodes.size;
+    const suffix = extra > 0 ? `已選${selectedCodes.size}筆(含子件共${exportedCount}筆)` : `已選${selectedCodes.size}筆`;
     a.download = `產品編碼_${suffix}_${new Date().toISOString().slice(0,10)}.csv`; a.click();
-    showListMsg(extra > 0 ? `已匯出，系統自動帶入 ${extra} 筆子件，共 ${expanded.size} 筆` : `已匯出 ${expanded.size} 筆`, 'success');
+    showListMsg(extra > 0 ? `已匯出，系統自動帶入 ${extra} 筆子件，共 ${exportedCount} 筆` : `已匯出 ${exportedCount} 筆`, 'success');
 }
 
 // === BOM 階層走訪：供匯出 CSV 使用，依樹狀結構排序並標出階層／上層編碼 ===
@@ -1511,33 +1500,35 @@ function exportSelectedCSV() {
 const BOM_CSV_HEADER = '階層,編碼,上層編碼,屬性,產品來源,物料類型代碼,物料類型,品別,描述,建立日期\n';
 const BOM_LEVEL_BY_ATTR = { '成品': 0, '半成品': 1, '物料': 2 };
 
+// 從某個節點開始往下遞迴走訪，push 進 rows；seenPath 只防同一條路徑上的循環，
+// 不同分支共用同一顆料是正常情況，會各自出現一次
+function walkNode(item, parentCode, seenPath, rows, visited) {
+    rows.push({ item, level: BOM_LEVEL_BY_ATTR[item.attr] ?? '', parentCode });
+    if (visited) visited.add(item.code);
+    if (seenPath.has(item.code)) return; // 同一條路徑上出現循環（不應發生，防呆）就停止，避免無窮遞迴
+    const nextSeen = new Set(seenPath);
+    nextSeen.add(item.code);
+    const children = getChildrenOf(item.code)
+        .map(code => codesCache.find(c => c.code === code))
+        .filter(Boolean)
+        .sort((a, b) => a.code.localeCompare(b.code));
+    children.forEach(child => walkNode(child, item.code, nextSeen, rows, visited));
+}
+
 function walkBomTree() {
     const rows = [];
     const visited = new Set();
 
-    function walk(item, parentCode, seenPath) {
-        rows.push({ item, level: BOM_LEVEL_BY_ATTR[item.attr] ?? '', parentCode });
-        visited.add(item.code);
-        if (seenPath.has(item.code)) return; // 同一條路徑上出現循環（不應發生，防呆）就停止，避免無窮遞迴
-        const nextSeen = new Set(seenPath);
-        nextSeen.add(item.code);
-        const children = getChildrenOf(item.code)
-            .map(code => codesCache.find(c => c.code === code))
-            .filter(Boolean)
-            .sort((a, b) => a.code.localeCompare(b.code));
-        children.forEach(child => walk(child, item.code, nextSeen));
-    }
-
     // 第一輪：從每個成品開始往下走，正常的 BOM 樹
     codesCache.filter(c => c.attr === '成品')
         .sort((a, b) => a.code.localeCompare(b.code))
-        .forEach(r => walk(r, null, new Set()));
+        .forEach(r => walkNode(r, null, new Set(), rows, visited));
 
     // 第二輪：完全沒有上層、還沒歸屬任何成品的孤兒半成品，自己當作另一棵樹的根往下走，
     // 不然它底下的子項會全部擠進「未歸類」，看不出彼此的巢狀關係跟上層編碼
     codesCache.filter(c => c.attr === '半成品' && !visited.has(c.code) && getParentsOf(c.code).length === 0)
         .sort((a, b) => a.code.localeCompare(b.code))
-        .forEach(r => walk(r, null, new Set()));
+        .forEach(r => walkNode(r, null, new Set(), rows, visited));
 
     // 真正完全沒被任何路徑走到的項目，排在最後標「未歸類」（正常情況下應該只剩下
     // 真的沒有任何父子關係、也沒有任何子項的孤立項目）
@@ -1545,6 +1536,19 @@ function walkBomTree() {
         .sort((a, b) => a.code.localeCompare(b.code))
         .forEach(c => rows.push({ item: c, level: '未歸類', parentCode: '' }));
 
+    return rows;
+}
+
+// 匯出「已勾選」專用：直接把勾選到的代碼當作各自的根重新走一遍，只長出它們自己的
+// 子樹。不能沿用 walkBomTree() 的全域結果再篩選——共用件會把它在其他成品底下的
+// 分支也一起帶進來，勾選的項目自己反而被埋在一堆不相關的資料中間找不到
+function walkFromRoots(rootCodes) {
+    const rows = [];
+    [...rootCodes]
+        .map(code => codesCache.find(c => c.code === code))
+        .filter(Boolean)
+        .sort((a, b) => a.code.localeCompare(b.code))
+        .forEach(item => walkNode(item, null, new Set(), rows, null));
     return rows;
 }
 
