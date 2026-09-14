@@ -1505,16 +1505,18 @@ function exportSelectedCSV() {
 }
 
 // === BOM 階層走訪：供匯出 CSV 使用，依樹狀結構排序並標出階層／上層編碼 ===
-// 成品固定階層 0，往下每一層 +1（半成品可以巢狀掛在另一個半成品底下，深度不是固定的）。
+// 階層固定依「屬性」對應：成品=0、半成品=1、物料=2，不管實際巢狀多深
+// （半成品掛半成品、物料掛在很深的半成品底下，階層還是分別維持 1 跟 2）。
 // 一個編碼若同時歸屬多個上層（共用件），會依各自路徑各出現一次，才能正確反映實際用在哪裡。
 const BOM_CSV_HEADER = '階層,編碼,上層編碼,屬性,產品來源,物料類型代碼,物料類型,品別,描述,建立日期\n';
+const BOM_LEVEL_BY_ATTR = { '成品': 0, '半成品': 1, '物料': 2 };
 
 function walkBomTree() {
     const rows = [];
     const visited = new Set();
 
-    function walk(item, level, parentCode, seenPath) {
-        rows.push({ item, level, parentCode });
+    function walk(item, parentCode, seenPath) {
+        rows.push({ item, level: BOM_LEVEL_BY_ATTR[item.attr] ?? '', parentCode });
         visited.add(item.code);
         if (seenPath.has(item.code)) return; // 同一條路徑上出現循環（不應發生，防呆）就停止，避免無窮遞迴
         const nextSeen = new Set(seenPath);
@@ -1523,21 +1525,19 @@ function walkBomTree() {
             .map(code => codesCache.find(c => c.code === code))
             .filter(Boolean)
             .sort((a, b) => a.code.localeCompare(b.code));
-        children.forEach(child => walk(child, level + 1, item.code, nextSeen));
+        children.forEach(child => walk(child, item.code, nextSeen));
     }
 
-    // 第一輪：從每個成品開始往下走，正常的 BOM 樹（成品固定階層0）
+    // 第一輪：從每個成品開始往下走，正常的 BOM 樹
     codesCache.filter(c => c.attr === '成品')
         .sort((a, b) => a.code.localeCompare(b.code))
-        .forEach(r => walk(r, 0, null, new Set()));
+        .forEach(r => walk(r, null, new Set()));
 
-    // 第二輪：完全沒有上層、還沒歸屬任何成品的孤兒半成品，自己當作另一棵樹的根，
-    // 一樣往下算階層（0、1、2…）——階層是相對這棵樹本身，不是「真的掛在成品下」的
-    // 意思，看屬性欄是成品還是半成品就能分辨；不然它底下的子項會全部擠進「未歸類」，
-    // 完全看不出彼此的巢狀關係
+    // 第二輪：完全沒有上層、還沒歸屬任何成品的孤兒半成品，自己當作另一棵樹的根往下走，
+    // 不然它底下的子項會全部擠進「未歸類」，看不出彼此的巢狀關係跟上層編碼
     codesCache.filter(c => c.attr === '半成品' && !visited.has(c.code) && getParentsOf(c.code).length === 0)
         .sort((a, b) => a.code.localeCompare(b.code))
-        .forEach(r => walk(r, 0, null, new Set()));
+        .forEach(r => walk(r, null, new Set()));
 
     // 真正完全沒被任何路徑走到的項目，排在最後標「未歸類」（正常情況下應該只剩下
     // 真的沒有任何父子關係、也沒有任何子項的孤立項目）
