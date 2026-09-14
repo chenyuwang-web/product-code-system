@@ -1539,12 +1539,22 @@ function walkBomTree() {
     return rows;
 }
 
-// 匯出「已勾選」專用：直接把勾選到的代碼當作各自的根重新走一遍，只長出它們自己的
+// 從一批勾選的代碼裡，找出「真正的根」：自己的上層沒有一個也在這批勾選裡的項目。
+// 使用者常常用「全選」把某個節點底下所有子孫也一起勾起來（畫面上看到的每一列都
+// 打勾），這種情況下子孫不該被當成獨立的根各自重新展開一次——那樣會把同一棵子
+// 樹重複展開好幾次，順序也會被打散，跟畫面上的樹狀結構對不起來。只留下真正的根，
+// 其餘子孫交給根節點自己的遞迴自然帶出來即可。
+function topLevelOf(codes) {
+    const set = new Set(codes);
+    return [...set].filter(code => !getParentsOf(code).some(p => set.has(p)));
+}
+
+// 匯出「已勾選」專用：把勾選裡真正的根當作各自的根重新走一遍，只長出它們自己的
 // 子樹。不能沿用 walkBomTree() 的全域結果再篩選——共用件會把它在其他成品底下的
 // 分支也一起帶進來，勾選的項目自己反而被埋在一堆不相關的資料中間找不到
 function walkFromRoots(rootCodes) {
     const rows = [];
-    [...rootCodes]
+    topLevelOf(rootCodes)
         .map(code => codesCache.find(c => c.code === code))
         .filter(Boolean)
         .sort((a, b) => a.code.localeCompare(b.code))
