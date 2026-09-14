@@ -1477,13 +1477,31 @@ async function bulkUnassignAll() {
     showListMsg(fail === 0 ? `✓ 已移除 ${success} 筆歸屬` : `✓ 成功 ${success} / ✗ 失敗 ${fail}`, fail === 0 ? 'success' : 'error');
 }
 
+// 勾選成品／半成品時，自動把它底下所有子項（含孫階，例如半成品底下的物料）一起帶入匯出，
+// 不用把每一顆物料都勾一次；子項本身也可能有自己的子項（半成品掛半成品），要一路往下展開
+function expandWithDescendants(codes) {
+    const result = new Set(codes);
+    const stack = [...codes];
+    while (stack.length) {
+        const code = stack.pop();
+        getChildrenOf(code).forEach(childCode => {
+            if (!result.has(childCode)) { result.add(childCode); stack.push(childCode); }
+        });
+    }
+    return result;
+}
+
 function exportSelectedCSV() {
     if (selectedCodes.size === 0) return;
-    const rows = walkBomTree().filter(r => selectedCodes.has(r.item.code));
+    const expanded = expandWithDescendants(selectedCodes);
+    const rows = walkBomTree().filter(r => expanded.has(r.item.code));
     const body = rows.map(bomRowToCsvLine).join('\n');
     const blob = new Blob(['\uFEFF' + BOM_CSV_HEADER + body], {type: 'text/csv;charset=utf-8;'});
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-    a.download = `產品編碼_已選${selectedCodes.size}筆_${new Date().toISOString().slice(0,10)}.csv`; a.click();
+    const extra = expanded.size - selectedCodes.size;
+    const suffix = extra > 0 ? `已選${selectedCodes.size}筆(含子件共${expanded.size}筆)` : `已選${selectedCodes.size}筆`;
+    a.download = `產品編碼_${suffix}_${new Date().toISOString().slice(0,10)}.csv`; a.click();
+    showListMsg(extra > 0 ? `已匯出，系統自動帶入 ${extra} 筆子件，共 ${expanded.size} 筆` : `已匯出 ${expanded.size} 筆`, 'success');
 }
 
 // === BOM 階層走訪：供匯出 CSV 使用，依樹狀結構排序並標出階層／上層編碼 ===
@@ -1508,11 +1526,21 @@ function walkBomTree() {
         children.forEach(child => walk(child, level + 1, item.code, nextSeen));
     }
 
+    // 第一輪：從每個成品開始往下走，正常的 BOM 樹（成品固定階層0）
     codesCache.filter(c => c.attr === '成品')
         .sort((a, b) => a.code.localeCompare(b.code))
         .forEach(r => walk(r, 0, null, new Set()));
 
-    // 完全沒被任何成品路徑走到的項目（未歸類項目，含孤兒半成品跟它底下的子項），排在最後
+    // 第二輪：完全沒有上層、還沒歸屬任何成品的孤兒半成品，自己當作另一棵樹的根，
+    // 一樣往下算階層（0、1、2…）——階層是相對這棵樹本身，不是「真的掛在成品下」的
+    // 意思，看屬性欄是成品還是半成品就能分辨；不然它底下的子項會全部擠進「未歸類」，
+    // 完全看不出彼此的巢狀關係
+    codesCache.filter(c => c.attr === '半成品' && !visited.has(c.code) && getParentsOf(c.code).length === 0)
+        .sort((a, b) => a.code.localeCompare(b.code))
+        .forEach(r => walk(r, 0, null, new Set()));
+
+    // 真正完全沒被任何路徑走到的項目，排在最後標「未歸類」（正常情況下應該只剩下
+    // 真的沒有任何父子關係、也沒有任何子項的孤立項目）
     codesCache.filter(c => !visited.has(c.code))
         .sort((a, b) => a.code.localeCompare(b.code))
         .forEach(c => rows.push({ item: c, level: '未歸類', parentCode: '' }));
