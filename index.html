@@ -1479,15 +1479,50 @@ async function bulkUnassignAll() {
 
 function exportSelectedCSV() {
     if (selectedCodes.size === 0) return;
-    const items = codesCache.filter(c => selectedCodes.has(c.code));
-    const header = '編碼,屬性,產品來源,物料類型代碼,物料類型,品別,描述,建立日期\n';
-    const rows = items.map(c => {
-        const date = c.created_at ? new Date(c.created_at).toLocaleDateString('zh-TW') : '';
-        return `${c.code},${c.attr},${c.source},${c.material_code},${c.material},${c.grade},"${c.description || ''}",${date}`;
-    }).join('\n');
-    const blob = new Blob(['\uFEFF' + header + rows], {type: 'text/csv;charset=utf-8;'});
+    const rows = walkBomTree().filter(r => selectedCodes.has(r.item.code));
+    const body = rows.map(bomRowToCsvLine).join('\n');
+    const blob = new Blob(['\uFEFF' + BOM_CSV_HEADER + body], {type: 'text/csv;charset=utf-8;'});
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
     a.download = `產品編碼_已選${selectedCodes.size}筆_${new Date().toISOString().slice(0,10)}.csv`; a.click();
+}
+
+// === BOM 階層走訪：供匯出 CSV 使用，依樹狀結構排序並標出階層／上層編碼 ===
+// 成品固定階層 0，往下每一層 +1（半成品可以巢狀掛在另一個半成品底下，深度不是固定的）。
+// 一個編碼若同時歸屬多個上層（共用件），會依各自路徑各出現一次，才能正確反映實際用在哪裡。
+const BOM_CSV_HEADER = '階層,編碼,上層編碼,屬性,產品來源,物料類型代碼,物料類型,品別,描述,建立日期\n';
+
+function walkBomTree() {
+    const rows = [];
+    const visited = new Set();
+
+    function walk(item, level, parentCode, seenPath) {
+        rows.push({ item, level, parentCode });
+        visited.add(item.code);
+        if (seenPath.has(item.code)) return; // 同一條路徑上出現循環（不應發生，防呆）就停止，避免無窮遞迴
+        const nextSeen = new Set(seenPath);
+        nextSeen.add(item.code);
+        const children = getChildrenOf(item.code)
+            .map(code => codesCache.find(c => c.code === code))
+            .filter(Boolean)
+            .sort((a, b) => a.code.localeCompare(b.code));
+        children.forEach(child => walk(child, level + 1, item.code, nextSeen));
+    }
+
+    codesCache.filter(c => c.attr === '成品')
+        .sort((a, b) => a.code.localeCompare(b.code))
+        .forEach(r => walk(r, 0, null, new Set()));
+
+    // 完全沒被任何成品路徑走到的項目（未歸類項目，含孤兒半成品跟它底下的子項），排在最後
+    codesCache.filter(c => !visited.has(c.code))
+        .sort((a, b) => a.code.localeCompare(b.code))
+        .forEach(c => rows.push({ item: c, level: '未歸類', parentCode: '' }));
+
+    return rows;
+}
+
+function bomRowToCsvLine({ item, level, parentCode }) {
+    const date = item.created_at ? new Date(item.created_at).toLocaleDateString('zh-TW') : '';
+    return `${level},${item.code},${parentCode || ''},${item.attr},${item.source || ''},${item.material_code || ''},${item.material || ''},${item.grade || ''},"${item.description || ''}",${date}`;
 }
 
 // === 編輯功能 ===
@@ -2362,12 +2397,9 @@ async function refreshCodes() {
 
 function exportCSV() {
     if (!codesCache.length) { showMsg('沒有資料可匯出', 'error'); return; }
-    const header = '編碼,屬性,產品來源,物料類型代碼,物料類型,品別,描述,建立日期\n';
-    const rows = codesCache.map(c => {
-        const date = c.created_at ? new Date(c.created_at).toLocaleDateString('zh-TW') : '';
-        return `${c.code},${c.attr},${c.source},${c.material_code},${c.material},${c.grade},"${c.description || ''}",${date}`;
-    }).join('\n');
-    const blob = new Blob(['\uFEFF' + header + rows], {type: 'text/csv;charset=utf-8;'});
+    const rows = walkBomTree();
+    const body = rows.map(bomRowToCsvLine).join('\n');
+    const blob = new Blob(['\uFEFF' + BOM_CSV_HEADER + body], {type: 'text/csv;charset=utf-8;'});
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
     a.download = `產品編碼_${new Date().toISOString().slice(0,10)}.csv`; a.click();
 }
