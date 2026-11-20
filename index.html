@@ -2163,7 +2163,7 @@ function renderBomGrouped(sorted, cols, buildHeader, buildRow, renderItems, quer
         </div>`;
         html += `<div class="bom-product-body ${isOpen ? 'open' : ''}">`;
         // 加上歸類按鈕的表格
-        html += renderUnassignedTable(unassigned, cols, buildHeader, buildRow);
+        html += isOpen ? renderUnassignedTable(unassigned, cols, buildHeader, buildRow) : ''; // 收合時不產生內容，避免數萬個元素拖慢頁面
         html += '</div></div>';
     }
 
@@ -2174,16 +2174,16 @@ function renderUnassignedTable(items, cols, buildHeader, buildRow) {
     // 取得歸類選項：成品皆可選；物料、半成品本身還可以選另一個半成品當上層
     const productsOnly = codesCache.filter(c => c.attr === '成品');
     const semisOnly = codesCache.filter(c => c.attr === '半成品');
+    // 選項字串只產生一次，避免每一列重複組出數十個 <option>
+    const productOptsHtml = productsOnly.map(p => `<option value="${p.code}">${p.code} ${(p.description||'').substring(0,20)}</option>`).join('');
+    const semiOpts = semisOnly.map(s => [s.code, `<option value="${s.code}">[半成品] ${s.code} ${(s.description||'').substring(0,20)}</option>`]);
     const assignSelectTd = (item) => {
-        const opts = productsOnly.map(p => `<option value="${p.code}">${p.code} ${(p.description||'').substring(0,20)}</option>`);
-        if (item.attr === '物料' || item.attr === '半成品') {
-            semisOnly.filter(s => s.code !== item.code).forEach(s => {
-                opts.push(`<option value="${s.code}">[半成品] ${s.code} ${(s.description||'').substring(0,20)}</option>`);
-            });
-        }
+        const semis = (item.attr === '物料' || item.attr === '半成品')
+            ? semiOpts.filter(([code]) => code !== item.code).map(([, h]) => h).join('')
+            : '';
         return `<td><select class="assign-parent-select" onchange="assignParent('${item.code}', this.value)">
             <option value="">-- 選擇成品／半成品 --</option>
-            ${opts.join('')}
+            ${productOptsHtml}${semis}
         </select></td>`;
     };
 
