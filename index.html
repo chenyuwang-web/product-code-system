@@ -3714,7 +3714,7 @@ if ('serviceWorker' in navigator) {
         await loadCodes();
         // 一次性遷移：localStorage 的舊 BOM 歸屬 → DB bom_links
         await migrateBomMapToDb();
-        await autoDetectBomGroups();
+        // 不在載入時自動偵測歸屬：否則手動「移出」的品項每次重新整理都會被掛回去。需要時請按「重新偵測歸屬」。
         refreshMaterialDropdowns();
         populateExpParent();
         populateAddParent();
