@@ -2103,8 +2103,31 @@ function renderBomGrouped(sorted, cols, buildHeader, buildRow, renderItems, quer
     let html = '';
 
     // 渲染每個成品群組
+    // 建立 上層 → 子項 對照，標題筆數改為統計整棵子樹（含半成品底下的物料）
+    const childMap = {};
+    linksCache.forEach(l => { (childMap[l.parent_code] = childMap[l.parent_code] || []).push(l.child_code); });
+    const countSubtree = (root) => {
+        const seen = new Set();
+        const stack = [root];
+        while (stack.length) {
+            const p = stack.pop();
+            (childMap[p] || []).forEach(ch => {
+                if (ch !== root && !seen.has(ch)) { seen.add(ch); stack.push(ch); }
+            });
+        }
+        let semi = 0, mat = 0;
+        seen.forEach(code => {
+            const c = codeMap[code];
+            if (!c) return;
+            if (c.attr === '半成品') semi++;
+            else if (c.attr !== '成品') mat++;
+        });
+        return { semi, mat };
+    };
+
     Object.keys(productGroups).forEach(pCode => {
         const grp = productGroups[pCode];
+        const subCount = countSubtree(pCode);
         const product = grp.product;
         if (!product) return;
         // 有搜尋時：成品本身或任一子項目符合即顯示
@@ -2125,7 +2148,7 @@ function renderBomGrouped(sorted, cols, buildHeader, buildRow, renderItems, quer
                 <span class="product-code">${product.code}</span>
                 <span class="product-desc">${descShort}</span>
             </div>
-            <span class="product-count">半成品 ${grp.semi.length} + 物料 ${grp.mat.length} = ${totalChildren} 筆</span>
+            <span class="product-count">半成品 ${subCount.semi} + 物料 ${subCount.mat} = ${subCount.semi + subCount.mat} 筆</span>
         </div>`;
         html += `<div class="bom-product-body ${isOpen ? 'open' : ''}">`;
 
