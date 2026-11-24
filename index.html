@@ -785,7 +785,8 @@ const selectors = ['attr', 'source', 'material', 'grade'];
 
 function getNextSerial(attr, source, material, grade) {
     const prefix = attr + source + material + grade;
-    const used = codesCache
+    // 回收桶中的編碼也算已使用，避免重發相同號碼
+    const used = codesCache.concat(deletedCodesCache)
         .filter(c => c.code.startsWith(prefix))
         .map(c => parseInt(c.code.slice(-4)))
         .sort((a, b) => a - b);
@@ -1067,7 +1068,7 @@ function resetForm() {
 // === 客供費用倉 B碼 ===
 function getNextExpenseSerial(matType) {
     const prefix = 'B' + matType;
-    const used = codesCache
+    const used = codesCache.concat(deletedCodesCache)
         .filter(c => c.code.startsWith(prefix) && c.code.length === 7)
         .map(c => parseInt(c.code.slice(-5)))
         .filter(n => !isNaN(n))
@@ -1620,6 +1621,10 @@ async function saveEdit(origCode) {
             showMsg('編碼格式不正確，需為 10 碼（如 A1MECN0001）', 'error');
             return;
         }
+        if (deletedCodesCache.some(c => c.code === newCode)) {
+            showMsg(`編碼 ${newCode} 在回收桶中，請先到回收桶還原或永久刪除後再使用`, 'error');
+            return;
+        }
         if (codesCache.some(c => c.code === newCode && c.code !== origCode)) {
             showMsg(`編碼 ${newCode} 已存在，不可重複`, 'error');
             return;
@@ -1630,7 +1635,7 @@ async function saveEdit(origCode) {
 
     try {
         if (codeChanged) {
-            // 編碼改變：需要刪除舊的、新增新的
+            // 編碼改變：直接更新原本那筆（保留建立日期與紀錄，舊編碼不進回收桶）
             const oldItem = codesCache.find(c => c.code === origCode);
             const parsed = parseCode(newCode);
             const newRow = {
@@ -1642,8 +1647,15 @@ async function saveEdit(origCode) {
                 grade: newGrade !== undefined ? newGrade : (oldItem && oldItem.grade) || '',
                 description: newDesc !== undefined ? newDesc : (oldItem && oldItem.description) || ''
             };
-            await DB.remove(origCode);
-            await DB.insert(newRow);
+            try {
+                const updated = await DB.update(origCode, newRow);
+                if (!Array.isArray(updated) || updated.length === 0) throw new Error('沒有資料被更新');
+            } catch (renameErr) {
+                // 資料庫拒絕直接改編碼時，退回原本「刪除後新增」的做法，確保不遺失資料
+                console.warn('直接更新編碼失敗，改用刪除後新增：', renameErr);
+                await DB.remove(origCode);
+                await DB.insert(newRow);
+            }
             // 更新勾選狀態
             if (selectedCodes.has(origCode)) {
                 selectedCodes.delete(origCode);
@@ -2998,7 +3010,7 @@ function renderBomTable() {
 
 function getNextBomSerial(attr, source, material, grade, currentIdx) {
     const prefix = attr + source + material + grade;
-    const usedInDb = codesCache.filter(c => c.code.startsWith(prefix)).map(c => parseInt(c.code.slice(-4)));
+    const usedInDb = codesCache.concat(deletedCodesCache).filter(c => c.code.startsWith(prefix)).map(c => parseInt(c.code.slice(-4)));
     const usedInBom = [];
     const batchAttr = document.getElementById('bomAttr').value;
     const batchSource = document.getElementById('bomSource').value;
@@ -3343,7 +3355,9 @@ async function restoreCode(code) {
     } catch (e) { alert('還原失敗：' + e.message); }
 }
 async function hardDeleteCode(code) {
-    if (!confirm(`永久刪除 ${code}？此操作無法復原！`)) return;
+    const nLinks = linksCache.filter(l => l.child_code === code || l.parent_code === code).length;
+    const linkWarn = nLinks ? `\n⚠ 會一併移除 ${nLinks} 筆 BOM 歸屬（上下層關係），相關子項會變成未歸類。` : '';
+    if (!confirm(`永久刪除 ${code}？${linkWarn}\n此操作無法復原！`)) return;
     try {
         await DB.remove(code, { hard: true });
         openTrash();
@@ -3352,7 +3366,10 @@ async function hardDeleteCode(code) {
 }
 
 async function hardDeleteAll(count) {
-    if (!confirm(`確定要永久刪除回收桶內全部 ${count} 筆紀錄？\n此操作無法復原！`)) return;
+    const trashCodes = new Set(deletedCodesCache.map(c => c.code));
+    const nLinks = linksCache.filter(l => trashCodes.has(l.child_code) || trashCodes.has(l.parent_code)).length;
+    const linkWarn = nLinks ? `\n⚠ 會一併移除 ${nLinks} 筆 BOM 歸屬（上下層關係），相關子項會變成未歸類。` : '';
+    if (!confirm(`確定要永久刪除回收桶內全部 ${count} 筆紀錄？${linkWarn}\n此操作無法復原！`)) return;
     const btn = event.target;
     btn.disabled = true; btn.textContent = '刪除中…';
     try {
